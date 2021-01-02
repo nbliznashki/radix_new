@@ -74,18 +74,13 @@ impl<'a> ColumnOperations<'a> for ColumnWrapper<'a> {
     ) -> Result<ColumnWrapper<'static>, ErrorDesc> {
         let signature = Signature::new("" as &str, vec![item_type_id]);
         let internaloperator = dict.columninternal.get(&signature);
-        let mut c = match internaloperator {
-            Some(iop) => iop.new_owned_with_capacity(capacity, binary_capacity),
+        let c = match internaloperator {
+            Some(iop) => iop.new_owned_with_capacity(capacity, binary_capacity, with_bitmap),
             None => Err(format!(
                 "The following internal column operation not found in dictionary: {:?}",
                 signature
             ))?,
         };
-        if with_bitmap {
-            let v: Vec<bool> = Vec::with_capacity(capacity);
-            let b = ColumnDataF::new(v);
-            c.bitmap_set(b);
-        }
         Ok(c)
     }
 

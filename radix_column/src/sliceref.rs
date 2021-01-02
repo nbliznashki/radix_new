@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, mem::MaybeUninit};
 
 use super::ErrorDesc;
 
@@ -221,5 +221,11 @@ impl<'a> SliceRefMut<'a> {
                 std::any::type_name::<T>()
             ))?
         }
+    }
+    //SAFETY: The caller must take care that the column is fully initialized
+    pub unsafe fn assume_init<T: Send + Sync + 'static>(mut self) -> Result<Self, ErrorDesc> {
+        let _v = self.downcast_mut::<MaybeUninit<T>>()?;
+        self.item_type_id = std::any::TypeId::of::<T>();
+        Ok(self)
     }
 }

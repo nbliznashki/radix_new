@@ -6,7 +6,7 @@ pub use table::*;
 #[cfg(test)]
 mod tests {
 
-    use crate::{filter, PartitionedIndex, Table, TableExpression};
+    use crate::{filter, tabletotable::TableToTableMap, PartitionedIndex, Table, TableExpression};
     use radix_column::*;
     use radix_operations::*;
 
@@ -346,10 +346,10 @@ mod tests {
 
     #[test]
     fn columns_filter() {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
-            .build_global()
-            .unwrap();
+        /*rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build_global()
+        .unwrap();*/
         let dict = Dictionary::new();
 
         let mut t: Table = Table::new(vec![2, 2, 2, 2, 1]);
@@ -448,5 +448,183 @@ mod tests {
         ];
         let result = t.materialize_as_string(&dict, &3).unwrap();
         assert_eq!(result, expected_result);
+    }
+
+    #[test]
+    fn columns_hash() {
+        /*rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build_global()
+        .unwrap();*/
+        let dict = Dictionary::new();
+
+        let mut t: Table = Table::new(vec![2, 2, 2, 2, 1]);
+
+        let c2_names: Vec<String> = vec![
+            "1A".to_string(),
+            "2A".to_string(),
+            "3A".to_string(),
+            "4A".to_string(),
+            "5A".to_string(),
+            "6A".to_string(),
+            "7A".to_string(),
+            "8A".to_string(),
+            "9A".to_string(),
+        ];
+        let c2_bitmap: Vec<bool> = vec![true, true, true, true, true, true, true, true, false];
+        let c1_names: Vec<String> = vec![
+            "1A".to_string(),
+            "2A".to_string(),
+            "3A".to_string(),
+            "4A".to_string(),
+            "5A".to_string(),
+            "6A".to_string(),
+            "7A".to_string(),
+            "8A".to_string(),
+            "9A".to_string(),
+        ];
+        let c1_bitmap: Vec<bool> = vec![true, false, true, true, true, true, true, true, true];
+
+        t.push_with_bitmap(&dict, &c1_names, &c1_bitmap).unwrap();
+
+        t.push_with_bitmap(&dict, &c2_names, &c2_bitmap).unwrap();
+
+        let c2_index: PartitionedIndex = vec![
+            ColumnDataF::new(vec![0, 0]),
+            ColumnDataF::new(vec![0, 0]),
+            ColumnDataF::new(vec![0, 0]),
+            ColumnDataF::new(vec![0, 0]),
+            ColumnDataF::new(vec![0]),
+        ];
+
+        t.push_index(c2_index, &[1]).unwrap();
+        let h1 = t.build_hash(&dict, &[1]);
+        let h1: Vec<_> = h1.iter().flatten().map(|i| *i).collect();
+        t.push(&dict, &h1).unwrap();
+
+        let h2 = t.build_hash(&dict, &[1, 0]);
+        let h2: Vec<_> = h2.iter().flatten().map(|i| *i).collect();
+        t.push(&dict, &h2).unwrap();
+
+        assert_eq!(h1[0], h1[1]);
+        assert_eq!(h1[2], h1[3]);
+        assert_eq!(h1[4], h1[5]);
+        assert_eq!(h1[6], h1[7]);
+        assert_eq!(h1[8], u64::MAX);
+
+        assert_eq!(h1[1] - 1, h2[1]);
+
+        //t.print(&dict).unwrap();
+    }
+
+    #[test]
+    fn columns_tabletotable() {
+        /*rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build_global()
+        .unwrap();*/
+        let dict = Dictionary::new();
+
+        let mut t: Table = Table::new(vec![2, 2, 2, 2, 1]);
+
+        let c1_names: Vec<u64> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let c1_bitmap: Vec<bool> = vec![true, false, true, true, true, true, true, true, true];
+
+        let c2_names: Vec<String> = vec![
+            "1A".to_string(),
+            "2A".to_string(),
+            "3A".to_string(),
+            "4A".to_string(),
+            "5A".to_string(),
+            "6A".to_string(),
+            "7A".to_string(),
+            "8A".to_string(),
+            "9A".to_string(),
+        ];
+        let c2_bitmap: Vec<bool> = vec![true, true, true, true, true, true, true, true, false];
+
+        t.push_with_bitmap(&dict, &c1_names, &c1_bitmap).unwrap();
+
+        t.push_with_bitmap(&dict, &c2_names, &c2_bitmap).unwrap();
+
+        let c2_index: PartitionedIndex = vec![
+            ColumnDataF::new(vec![0, 0]),
+            ColumnDataF::new(vec![0, 0]),
+            ColumnDataF::new(vec![0, 0]),
+            ColumnDataF::new(vec![0, 0]),
+            ColumnDataF::new(vec![0]),
+        ];
+
+        t.push_index(c2_index, &[1]).unwrap();
+        let h = t.build_hash(&dict, &[1]);
+        let h1: Vec<_> = h.iter().flatten().map(|i| *i & 3).collect();
+        t.push(&dict, &h1).unwrap();
+
+        for (number_of_worker_threads, bucket_bits) in
+            vec![(2, 1), (2, 2), (2, 12), (1024, 1), (1024, 8), (1024, 12)]
+        {
+            let tmap: TableToTableMap =
+                TableToTableMap::new(&h, number_of_worker_threads, bucket_bits);
+            let res = unsafe { t.column_repartition(&dict, &h, &tmap, &0) };
+
+            let c_part_1: Vec<_> = res
+                .iter()
+                .map(|c| {
+                    let c_data = c.as_string(&dict, &ColumnDataF::None).unwrap();
+                    let c_bitmap = c.bitmap().downcast_ref().unwrap().to_vec();
+                    (c_data, c_bitmap)
+                })
+                .collect();
+            let mut c_part_1: Vec<_> = c_part_1
+                .into_iter()
+                .map(|(d, b)| d.into_iter().zip(b.into_iter()))
+                .flatten()
+                .collect();
+            c_part_1.sort_by(|a, b| a.0.cmp(&b.0));
+
+            let res = unsafe { t.column_repartition(&dict, &h, &tmap, &1) };
+
+            let c_part_2: Vec<_> = res
+                .iter()
+                .map(|c| {
+                    let c_data = c.as_string(&dict, &ColumnDataF::None).unwrap();
+                    let c_bitmap = c.bitmap().downcast_ref().unwrap().to_vec();
+                    (c_data, c_bitmap)
+                })
+                .collect();
+            let mut c_part_2: Vec<_> = c_part_2
+                .into_iter()
+                .map(|(d, b)| d.into_iter().zip(b.into_iter()))
+                .flatten()
+                .collect();
+            c_part_2.sort_by(|a, b| a.0.cmp(&b.0));
+
+            let c_part_1_expected = vec![
+                ("1".to_string(), true),
+                ("2".to_string(), false),
+                ("3".to_string(), true),
+                ("4".to_string(), true),
+                ("5".to_string(), true),
+                ("6".to_string(), true),
+                ("7".to_string(), true),
+                ("8".to_string(), true),
+                ("9".to_string(), true),
+            ];
+
+            let c_part_2_expected = vec![
+                ("1A".to_string(), true),
+                ("1A".to_string(), true),
+                ("3A".to_string(), true),
+                ("3A".to_string(), true),
+                ("5A".to_string(), true),
+                ("5A".to_string(), true),
+                ("7A".to_string(), true),
+                ("7A".to_string(), true),
+                ("9A".to_string(), false),
+            ];
+
+            assert_eq!(c_part_1_expected, c_part_1);
+            assert_eq!(c_part_2_expected, c_part_2);
+        }
     }
 }

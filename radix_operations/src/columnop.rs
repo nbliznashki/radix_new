@@ -1,6 +1,6 @@
-use std::any::Any;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::mem::MaybeUninit;
+use std::{any::Any, collections::VecDeque};
 
 use paste::paste;
 
@@ -11,6 +11,125 @@ use radix_column::*;
 fn copy_of_into_boxed_slice<T>(boxed: Box<T>) -> Box<[T]> {
     // *mut T and *mut [T; 1] have the same size and alignment
     unsafe { Box::from_raw(Box::into_raw(boxed) as *mut [T; 1]) }
+}
+
+fn copy_to_buckets_part<T: Copy>(
+    hash: &Vec<u64>,
+    buckets_mask: u64,
+    src: &[T],
+    src_index: &ColumnDataF<usize>,
+    offsets: &mut VecDeque<usize>,
+    dst: &mut [&mut [T]],
+) -> Result<usize, ErrorDesc> {
+    let mut items_written = 0;
+    if let Ok(src_index) = src_index.downcast_ref() {
+        src_index.iter().zip(hash.iter()).for_each(|(i, h)| {
+            let bucket_id = (*h & buckets_mask) as usize;
+            dst[bucket_id][offsets[bucket_id]] = src[*i];
+            offsets[bucket_id] += 1;
+            items_written += 1;
+        });
+    } else {
+        src.iter().zip(hash.iter()).for_each(|(val, h)| {
+            let bucket_id = (*h & buckets_mask) as usize;
+            dst[bucket_id][offsets[bucket_id]] = *val;
+            offsets[bucket_id] += 1;
+            items_written += 1;
+        });
+    }
+    Ok(items_written)
+}
+
+fn copy_to_buckets_part_uninit<T: Copy>(
+    hash: &Vec<u64>,
+    buckets_mask: u64,
+    src: &[T],
+    src_index: &ColumnDataF<usize>,
+    offsets: &mut VecDeque<usize>,
+    dst: &mut [&mut [MaybeUninit<T>]],
+) -> Result<usize, ErrorDesc> {
+    let mut items_written = 0;
+    if let Ok(src_index) = src_index.downcast_ref() {
+        src_index.iter().zip(hash.iter()).for_each(|(i, h)| {
+            let bucket_id = (*h & buckets_mask) as usize;
+            dst[bucket_id][offsets[bucket_id]] = MaybeUninit::new(src[*i]);
+            offsets[bucket_id] += 1;
+            items_written += 1;
+        });
+    } else {
+        src.iter().zip(hash.iter()).for_each(|(val, h)| {
+            let bucket_id = (*h & buckets_mask) as usize;
+
+            dst[bucket_id][offsets[bucket_id]] = MaybeUninit::new(*val);
+            offsets[bucket_id] += 1;
+            items_written += 1;
+        });
+    }
+    Ok(items_written)
+}
+
+fn copy_to_buckets_binary_part(
+    hash: &Vec<u64>,
+    buckets_mask: u64,
+    src_datau8: &[u8],
+    src_start_pos: &[usize],
+    src_len: &[usize],
+    src_offset: &usize,
+    src_index: &ColumnDataF<usize>,
+    offsets: &mut VecDeque<usize>,
+    dst: &mut [(&mut [u8], &[usize], &[usize], usize)],
+) -> Result<usize, ErrorDesc> {
+    let mut bytes_written: usize = 0;
+    if let Ok(src_index) = src_index.downcast_ref() {
+        src_index.iter().zip(hash.iter()).for_each(|(i, h)| {
+            let bucket_id = (*h & buckets_mask) as usize;
+            let (dst_datau8, dst_start_pos, dst_len, _a) = &mut dst[bucket_id];
+            let start_u8 = src_start_pos[*i] - src_offset;
+            let end_u8 = start_u8 + src_len[*i];
+            let slice_read = &src_datau8[start_u8..end_u8];
+
+            let start_pos_write = dst_start_pos[offsets[bucket_id]];
+            let end_pos_write = start_pos_write + dst_len[offsets[bucket_id]];
+            let slice_write = &mut dst_datau8[start_pos_write..end_pos_write];
+
+            bytes_written += slice_write
+                .iter_mut()
+                .zip(slice_read.iter())
+                .map(|(t, s)| {
+                    *t = *s;
+                    1usize
+                })
+                .sum::<usize>();
+            offsets[bucket_id] += 1;
+        });
+    } else {
+        src_start_pos
+            .iter()
+            .zip(src_len)
+            .zip(hash)
+            .for_each(|((start_pos, len), h)| {
+                let bucket_id = (*h & buckets_mask) as usize;
+                let (dst_datau8, dst_start_pos, dst_len, _a) = &mut dst[bucket_id];
+
+                let start_u8 = start_pos - src_offset;
+                let end_u8 = start_u8 + len;
+                let slice_read = &src_datau8[start_u8..end_u8];
+
+                let start_pos_write = dst_start_pos[offsets[bucket_id]];
+                let end_pos_write = start_pos_write + dst_len[offsets[bucket_id]];
+                let slice_write = &mut dst_datau8[start_pos_write..end_pos_write];
+
+                bytes_written += slice_write
+                    .iter_mut()
+                    .zip(slice_read.iter())
+                    .map(|(t, s)| {
+                        *t = *s;
+                        1usize
+                    })
+                    .sum::<usize>();
+            });
+    }
+    Ok(bytes_written)
 }
 
 ///Operations which all columns must implement
@@ -35,13 +154,47 @@ pub trait ColumnInternalOp {
         &self,
         capacity: usize,
         binary_capacity: usize,
+        with_bitmap: bool,
     ) -> ColumnWrapper<'static>;
+    fn new_uninit(
+        &self,
+        number_of_items: usize,
+        binary_storage: usize,
+        with_bitmap: bool,
+    ) -> ColumnWrapper<'static>;
+    //SAFETY: The caller must take care that the column is fully initialized
+    unsafe fn assume_init<'b>(&self, c: ColumnWrapper<'b>) -> Result<ColumnWrapper<'b>, ErrorDesc>;
     fn hash_in(
         &self,
         src: &ColumnWrapper,
         src_index: &ColumnDataF<usize>,
         dst: &mut Vec<u64>,
     ) -> Result<(), ErrorDesc>;
+
+    fn copy_to_buckets_part1(
+        &self,
+        hash: &[Vec<u64>],
+        buckets_mask: u64,
+        src_columns: &[Vec<ColumnWrapper>],
+        src_indexes: &[Vec<ColumnDataF<usize>>],
+        col_id: usize,
+        index_id: &Option<&usize>,
+        offsets: &VecDeque<usize>,
+        dst: &mut [ColumnWrapper<'static>],
+        is_nullable: bool,
+    ) -> Result<usize, ErrorDesc>;
+    fn copy_to_buckets_part2(&self, dst: &mut ColumnWrapper<'static>) -> Result<usize, ErrorDesc>;
+    fn copy_to_buckets_part3(
+        &self,
+        hash: &[Vec<u64>],
+        buckets_mask: u64,
+        src_columns: &[Vec<ColumnWrapper>],
+        src_indexes: &[Vec<ColumnDataF<usize>>],
+        col_id: usize,
+        index_id: &Option<&usize>,
+        offsets: &VecDeque<usize>,
+        dst: &mut [ColumnWrapper<'static>],
+    ) -> Result<usize, ErrorDesc>;
 }
 
 const OP: &str = "";
@@ -88,7 +241,6 @@ macro_rules! sized_types_impl {
                     type T=$tr;
                     inp.column().downcast_ref::<T>().map(|c| c.len())
                 }
-
                 fn truncate(&self, inp: &mut ColumnWrapper) -> Result<(), ErrorDesc>{
                     type T=$tr;
                     if let ColumnData::Owned(c)=inp.column_mut(){
@@ -171,10 +323,34 @@ macro_rules! sized_types_impl {
                     }
 
                 }
-                fn new_owned_with_capacity(&self, capacity: usize, _binary_capacity: usize) -> ColumnWrapper<'static>{
+                fn new_owned_with_capacity(&self, number_of_items: usize, _binary_capacity: usize, with_bitmap: bool) -> ColumnWrapper<'static>{
                     type T=$tr;
-                    ColumnWrapper::new_from_columndata (self.new(Box::new(Vec::<T>::with_capacity(capacity))).unwrap())
+                    let c=ColumnData::Owned(OwnedColumn::new(Vec::<T>::with_capacity(number_of_items)));
+                    let mut c=ColumnWrapper::new_from_columndata (c);
+                    if with_bitmap{
+                        c.bitmap_set(ColumnDataF::new(vec![false; number_of_items]))
+                    };
+                    c
                 }
+                fn new_uninit(&self, number_of_items: usize, _binary_storage: usize, with_bitmap: bool) -> ColumnWrapper<'static>{
+                    type T=$tr;
+                    let c=ColumnData::Owned(OwnedColumn::new_uninit::<T>(number_of_items));
+                    let mut c=ColumnWrapper::new_from_columndata (c);
+                    if with_bitmap{
+                        c.bitmap_set(ColumnDataF::new(vec![false; number_of_items]))
+                    };
+                    c
+                }
+
+                unsafe fn assume_init<'b>(&self, c: ColumnWrapper<'b>) -> Result<ColumnWrapper<'b>, ErrorDesc>{
+                    type T=$tr;
+                    let (column, bitmap)=c.get_inner();
+                    let column=column.assume_init::<T>()?;
+                    let mut c=ColumnWrapper::new_from_columndata (column);
+                    c.bitmap_set(bitmap);
+                    Ok(c)
+                }
+
                 fn hash_in(&self, src: &ColumnWrapper, src_index: &ColumnDataF<usize>, dst: &mut Vec<u64>)-> Result<(), ErrorDesc>{
                     type T=$tr;
                     let src_data=src.column().downcast_ref::<T>()?;
@@ -288,9 +464,73 @@ macro_rules! sized_types_impl {
                         }
                         Ok(())
                 }
+                fn copy_to_buckets_part1(
+                    &self,
+                    hash: &[Vec<u64>],
+                    buckets_mask: u64,
+                    src_columns: &[Vec<ColumnWrapper>],
+                    src_indexes: &[Vec<ColumnDataF<usize>>],
+                    col_id: usize,
+                    index_id: &Option<&usize>,
+                    offsets: &VecDeque<usize>,
+                    dst: &mut [ColumnWrapper<'static>],
+                    is_nullable: bool,
+                ) -> Result<usize, ErrorDesc>
+                {
+                    type T=$tr;
 
+                    let mut dst_data: Vec<_>=dst.iter_mut().map(|c| c.column_mut()).map(|c| c.downcast_mut::<MaybeUninit<T>>().unwrap()).collect();
+                    let mut offsets_tmp=offsets.clone();
+                    let mut items_written=0;
+
+                    let index_empty=ColumnDataF::<usize>::None;
+
+                    src_columns.iter().zip(src_indexes.iter()).zip(hash.iter()).for_each(|((src, src_index), hash)|{
+                        let src=src[col_id].column().downcast_ref::<T>().unwrap();
+                        let src_index=match index_id {
+                            Some(i) => &src_index[**i],
+                            None => &index_empty,
+                        };
+                        items_written+=copy_to_buckets_part_uninit(hash, buckets_mask, src, src_index, &mut offsets_tmp, &mut dst_data).unwrap();
+                    });
+
+                    if is_nullable {
+                        let mut offsets_tmp=offsets.clone();
+                        let mut dst_bitmap: Vec<_>=dst.iter_mut().map(|c| c.bitmap_mut().downcast_mut().unwrap()).collect();
+
+                        src_columns.iter().zip(src_indexes.iter()).zip(hash.iter()).for_each(|((src, src_index), hash)|{
+
+                            let src=src[col_id].bitmap().downcast_ref().unwrap();
+                            let src_index=match index_id {
+                                Some(i) => &src_index[**i],
+                                None => &index_empty,
+                            };
+                            items_written+=copy_to_buckets_part(hash, buckets_mask, src, src_index, &mut offsets_tmp, &mut dst_bitmap).unwrap();
+                        });
+                    }
+
+                    Ok(items_written)
+                }
+
+                fn copy_to_buckets_part2(&self, _dst: &mut ColumnWrapper<'static>) -> Result<usize, ErrorDesc>{Err("copy_to_buckets_part2 called for a sized type")?}
+                fn copy_to_buckets_part3(
+                    &self,
+                    _hash: &[Vec<u64>],
+                    _buckets_mask: u64,
+                    _src_columns: &[Vec<ColumnWrapper>],
+                    _src_indexes: &[Vec<ColumnDataF<usize>>],
+                    _col_id: usize,
+                    _index_id: &Option<&usize>,
+                    _offsets: &VecDeque<usize>,
+                    _dst: &mut [ColumnWrapper<'static>],
+                ) -> Result<usize, ErrorDesc>{Err("copy_to_buckets_part2 called for a sized type")?}
             }
+
     }
+
+
+
+
     )+)
 }
 
@@ -391,10 +631,29 @@ macro_rules! binary_types_impl {
                     }
 
                 }
-                fn new_owned_with_capacity(&self, capacity: usize, binary_capacity: usize) -> ColumnWrapper<'static>{
+                fn new_owned_with_capacity(&self, number_of_items: usize, binary_capacity: usize, with_bitmap: bool) -> ColumnWrapper<'static>{
                     type T=$tr;
-                    ColumnWrapper::new_from_columndata (ColumnData::BinaryOwned(OnwedBinaryColumn::new_with_capacity(&[] as &[T], capacity,binary_capacity)))
+                    let mut c=ColumnWrapper::new_from_columndata (ColumnData::BinaryOwned(OnwedBinaryColumn::new_with_capacity(&[] as &[T], number_of_items,binary_capacity)));
+                    if with_bitmap{
+                        c.bitmap_set(ColumnDataF::new(vec![false; number_of_items]))
+                    };
+                    c
                 }
+
+                fn new_uninit(&self, number_of_items: usize, binary_storage: usize, with_bitmap: bool) -> ColumnWrapper<'static>{
+                    type T=$tr;
+                    let mut c=ColumnWrapper::new_from_columndata (ColumnData::BinaryOwned(OnwedBinaryColumn::new_uninit::<T>(number_of_items,binary_storage)));
+                    if with_bitmap{
+                        c.bitmap_set(ColumnDataF::new(vec![false; number_of_items]))
+                    };
+                    c
+                }
+
+                unsafe fn assume_init<'b>(&self, c: ColumnWrapper<'b>) -> Result<ColumnWrapper<'b>, ErrorDesc>{
+                    Ok(c)
+                }
+
+
                 fn hash_in(&self, src: &ColumnWrapper, src_index: &ColumnDataF<usize>, dst: &mut Vec<u64>)-> Result<(), ErrorDesc>{
                     type T=$tr;
                     let (datau8, start_pos, len, offset) =src.column().downcast_binary_ref::<T>()?;
@@ -534,6 +793,96 @@ macro_rules! binary_types_impl {
                         }
                         Ok(())
                 }
+                fn copy_to_buckets_part1(
+                    &self,
+                    hash: &[Vec<u64>],
+                    buckets_mask: u64,
+                    src_columns: &[Vec<ColumnWrapper>],
+                    src_indexes: &[Vec<ColumnDataF<usize>>],
+                    col_id: usize,
+                    index_id: &Option<&usize>,
+                    offsets: &VecDeque<usize>,
+                    dst: &mut [ColumnWrapper<'static>],
+                    is_nullable: bool,
+                ) -> Result<usize, ErrorDesc>
+                {
+                    type T=$tr;
+
+                    let mut dst_data: Vec<_>=dst.iter_mut().map(|c| c.column_mut()).map(|c| c.downcast_binary_mut::<T>().unwrap().2).collect();
+                    let mut offsets_tmp=offsets.clone();
+                    let mut items_written=0;
+
+
+                    let index_empty=ColumnDataF::<usize>::None;
+
+                    src_columns.iter().zip(src_indexes.iter()).zip(hash.iter()).for_each(|((src, src_index), hash)|{
+                        let src=src[col_id].column().downcast_binary_ref::<T>().unwrap().2;
+                        let src_index=match index_id {
+                            Some(i) => &src_index[**i],
+                            None => &index_empty,
+                        };
+                        items_written+=copy_to_buckets_part(hash, buckets_mask, src, src_index, &mut offsets_tmp, &mut dst_data).unwrap();
+                    });
+
+                    if is_nullable {
+                        let mut offsets_tmp=offsets.clone();
+                        let mut dst_bitmap: Vec<_>=dst.iter_mut().map(|c| c.bitmap_mut().downcast_mut().unwrap()).collect();
+
+                        src_columns.iter().zip(src_indexes.iter()).zip(hash.iter()).for_each(|((src, src_index), hash)|{
+
+                            let src=src[col_id].bitmap().downcast_ref().unwrap();
+                            let src_index=match index_id {
+                                Some(i) => &src_index[**i],
+                                None => &index_empty,
+                            };
+                            items_written+=copy_to_buckets_part(hash, buckets_mask, src, src_index, &mut offsets_tmp, &mut dst_bitmap).unwrap();
+                        });
+                    }
+
+                    Ok(items_written)
+                }
+
+                fn copy_to_buckets_part2(&self, dst: &mut ColumnWrapper<'static>) -> Result<usize, ErrorDesc>{
+                    type T=$tr;
+                    let  (datau8, start_pos, len, offset)=dst.column_mut().downcast_binary_vec::<T>()?;
+                    let mut cur_start_pos=0;
+                    len.iter().zip(start_pos.iter_mut()).for_each(|(l,s)| {*s=cur_start_pos; cur_start_pos+=l});
+                    *datau8=vec![0; cur_start_pos];
+                    *offset=0;
+                    Ok(cur_start_pos)
+
+                }
+                fn copy_to_buckets_part3(
+                    &self,
+                    hash: &[Vec<u64>],
+                    buckets_mask: u64,
+                    src_columns: &[Vec<ColumnWrapper>],
+                    src_indexes: &[Vec<ColumnDataF<usize>>],
+                    col_id: usize,
+                    index_id: &Option<&usize>,
+                    offsets: &VecDeque<usize>,
+                    dst: &mut [ColumnWrapper<'static>],
+                ) -> Result<usize, ErrorDesc>{
+                    type T=$tr;
+
+                    let mut dst_data: Vec<_>=dst.iter_mut().map(|c| c.column_mut()).map(|c| c.downcast_binary_mut::<T>().unwrap())
+                    .map(|(src_datau8, src_start_pos,src_len,src_offset)|(src_datau8, &*src_start_pos,&*src_len,*src_offset)).collect();
+                    let mut offsets_tmp=offsets.clone();
+                    let mut bytes_written=0;
+
+                    let index_empty=ColumnDataF::<usize>::None;
+
+                    src_columns.iter().zip(src_indexes.iter()).zip(hash.iter()).for_each(|((src, src_index), hash)|{
+                        let (src_datau8, src_start_pos,src_len,src_offset)=src[col_id].column().downcast_binary_ref::<T>().unwrap();
+                        let src_index=match index_id {
+                            Some(i) => &src_index[**i],
+                            None => &index_empty,
+                        };
+
+                        bytes_written+=copy_to_buckets_binary_part(hash, buckets_mask, src_datau8,src_start_pos, src_len,src_offset , src_index, &mut offsets_tmp, &mut dst_data).unwrap();
+                    });
+                    Ok(bytes_written)
+                }
 
             }
 
@@ -541,6 +890,19 @@ macro_rules! binary_types_impl {
     }
     )+)
 }
+/*
+fn copy_to_buckets_binary_part(
+    hash: &Vec<u64>,
+    buckets_mask: u64,
+    src_datau8: &[u8],
+    src_start_pos: &[usize],
+    src_len: &[usize],
+    src_offset: &usize,
+    src_index: &ColumnDataF<usize>,
+    offsets: &mut VecDeque<usize>,
+    dst: &mut [(&mut [u8], &[usize], &[usize], usize)],
+)
+*/
 
 sized_types_impl! {
 u64 u32 u16 u8 bool usize

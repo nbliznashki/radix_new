@@ -1,4 +1,7 @@
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    mem::MaybeUninit,
+};
 
 use crate::ErrorDesc;
 
@@ -96,5 +99,24 @@ impl OwnedColumn {
                 std::any::type_name::<T>()
             ))?,
         }
+    }
+
+    pub fn new_uninit<T: Send + Sync + 'static>(number_of_items: usize) -> Self {
+        let mut v: Vec<MaybeUninit<T>> = Vec::with_capacity(number_of_items);
+        //SAFETY: Ok to do due to the MaybeUninit wrapper around T
+        unsafe { v.set_len(number_of_items) };
+
+        Self {
+            item_type_id: std::any::TypeId::of::<MaybeUninit<T>>(),
+            data: Box::new(v),
+        }
+    }
+    //SAFETY: The caller must take care that the column is fully initialized
+    pub unsafe fn assume_init<T: Send + Sync + 'static>(self) -> Result<Self, ErrorDesc> {
+        let v = self.downcast_owned::<MaybeUninit<T>>()?;
+        Ok(Self {
+            item_type_id: std::any::TypeId::of::<T>(),
+            data: Box::new(std::mem::transmute::<Vec<MaybeUninit<T>>, Vec<T>>(v)),
+        })
     }
 }

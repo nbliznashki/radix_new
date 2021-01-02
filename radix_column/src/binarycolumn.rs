@@ -58,6 +58,24 @@ impl OnwedBinaryColumn {
             len,
         }
     }
+
+    pub fn new_uninit<T: 'static + AsBytes>(
+        number_of_items: usize,
+        binary_storage_size: usize,
+    ) -> Self {
+        let start_pos: Vec<usize> = vec![0; number_of_items];
+        let len: Vec<usize> = vec![0; number_of_items];
+        let datau8: Vec<u8> = vec![0; binary_storage_size];
+
+        Self {
+            item_type_id: std::any::TypeId::of::<T>(),
+            offset: 0,
+            data: datau8,
+            start_pos,
+            len,
+        }
+    }
+
     pub fn is<T>(&self) -> bool
     where
         T: 'static,

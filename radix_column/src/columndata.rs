@@ -379,6 +379,23 @@ impl<'a> ColumnData<'a> {
             _ => Err("Operation not supported for columns which are not BinaryOwned")?,
         }
     }
+
+    pub unsafe fn assume_init<T: 'static + Send + Sync>(self) -> Result<Self, ErrorDesc> {
+        match self {
+            ColumnData::Owned(c) => c.assume_init::<T>().map(|c| ColumnData::Owned(c)),
+            ColumnData::SliceMut(c) => c.assume_init::<T>().map(|c| ColumnData::SliceMut(c)),
+            ColumnData::Slice(_) => Err(format!("Assume init not possible for mutable columns",))?,
+            ColumnData::Const(_) => Err(format!("Assume init not possible for mutable columns",))?,
+            ColumnData::BinaryOwned(_) => Ok(self),
+            ColumnData::BinarySliceMut(_) => Ok(self),
+            ColumnData::BinarySlice(_) => {
+                Err(format!("Assume init not possible for mutable columns",))?
+            }
+            ColumnData::BinaryConst(_) => {
+                Err(format!("Assume init not possible for mutable columns",))?
+            }
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

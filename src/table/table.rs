@@ -1,8 +1,9 @@
 use rayon::prelude::*;
-use std::{collections::HashMap, mem::MaybeUninit};
+use std::{cell::UnsafeCell, collections::HashMap, mem::MaybeUninit};
 
 use crate::{
-    column_buffer::ColumnBuffer, filter, part_with_sizes, part_with_sizes_mut, TableExpression,
+    column_buffer::ColumnBuffer, filter, part_with_sizes, part_with_sizes_mut,
+    tabletotable::TableToTableMap, TableExpression,
 };
 use radix_column::*;
 use radix_operations::*;
@@ -16,6 +17,7 @@ pub type PartitionedIndex<'a> = Vec<ColumnDataF<'a, usize>>;
 pub struct Table<'a> {
     partition_sizes: Vec<usize>,
     columns: Vec<Vec<ColumnWrapper<'a>>>,
+    columns_nullable: Vec<bool>,
     indexes: Vec<Vec<ColumnDataF<'a, usize>>>,
     columnindexmap: HashMap<usize, usize>,
     //buffer_columns: BufferColumns<'a>,
@@ -28,6 +30,7 @@ impl<'a> Table<'a> {
         Self {
             partition_sizes,
             columns,
+            columns_nullable: vec![],
             indexes,
             columnindexmap: HashMap::new(), //buffer_columns: BufferColumns::new(),
         }
@@ -42,6 +45,7 @@ impl<'a> Table<'a> {
             .iter_mut()
             .zip(p_column.into_iter())
             .for_each(|(v, c)| v.push(c));
+        self.columns_nullable.push(false);
         Ok(())
     }
 
@@ -57,8 +61,7 @@ impl<'a> Table<'a> {
         &mut self,
         p_index: PartitionedIndex<'a>,
         applies_for_columns: &[usize],
-    ) -> Result<(), ErrorDesc>
-where {
+    ) -> Result<(), ErrorDesc> {
         if self.partition_sizes.len() != p_index.len() {
             Err(format!(
                 "Mismatch while adding an index to a table: index has {} partitions, while the table has {} partitions",
@@ -112,6 +115,7 @@ where {
             .iter_mut()
             .zip(p_column.into_iter())
             .for_each(|(v, c)| v.push(c));
+        self.columns_nullable.push(true);
         Ok(())
     }
 
@@ -125,6 +129,7 @@ where {
             .iter_mut()
             .zip(p_column.into_iter())
             .for_each(|(v, c)| v.push(c));
+        self.columns_nullable.push(false);
         Ok(())
     }
 
@@ -142,6 +147,7 @@ where {
             .iter_mut()
             .zip(p_column.into_iter())
             .for_each(|(v, c)| v.push(c));
+        self.columns_nullable.push(true);
         Ok(())
     }
 
@@ -527,5 +533,177 @@ where {
                     c.push(res);
                 });
             });
+        //TO-DO - fix this!!!
+        self.columns_nullable.push(true);
+    }
+
+    pub fn build_hash(&self, dict: &Dictionary, input_ids: &[usize]) -> Vec<Vec<u64>> {
+        let num_of_cpus = num_cpus::get();
+        let chunk_size = (self.partition_sizes.len() + num_of_cpus - 1) / num_of_cpus;
+
+        //TO-DO: Switch to general execution framework
+        let mut output: Vec<Vec<u64>> = self
+            .partition_sizes
+            .par_iter()
+            .map(|i| Vec::with_capacity(*i))
+            .collect();
+        let index_empty = ColumnDataF::<usize>::None;
+
+        input_ids.iter().for_each(|col_id| {
+            let signature = Signature::new(
+                "" as &str,
+                vec![self.columns[0][*col_id].column().item_type_id()],
+            );
+            let iop = dict.columninternal.get(&signature).unwrap();
+            let c_index = self.columnindexmap.get(col_id);
+            self.columns
+                .par_chunks(chunk_size)
+                .zip_eq(self.indexes.par_chunks(chunk_size))
+                .zip_eq(output.par_chunks_mut(chunk_size))
+                .for_each(|((columns, indexes), output)| {
+                    columns.iter().zip(indexes).zip(output).for_each(
+                        |((columns, indexes), output)| {
+                            let c_index = match c_index {
+                                Some(i) => &indexes[*i],
+                                None => &index_empty,
+                            };
+                            let c = &columns[*col_id];
+                            iop.hash_in(c, c_index, output).unwrap()
+                        },
+                    );
+                });
+        });
+        output
+    }
+    pub unsafe fn column_repartition(
+        &self,
+        dict: &Dictionary,
+        hash: &Vec<Vec<u64>>,
+        tmap: &TableToTableMap,
+        col_id: &usize,
+    ) -> Vec<ColumnWrapper> {
+        struct UnsafeOutput {
+            data: UnsafeCell<Vec<ColumnWrapper<'static>>>,
+        }
+        //SAFETY: check below
+        unsafe impl Sync for UnsafeOutput {}
+
+        let chunk_size = tmap.target_partition_size;
+
+        let signature = Signature::new(
+            "" as &str,
+            vec![self.columns[0][*col_id].column().item_type_id()],
+        );
+        let iop = dict.columninternal.get(&signature).unwrap();
+        let with_bitmap = self.columns_nullable[*col_id];
+
+        let is_binary = self.columns[0][*col_id].is_binary();
+        let c_index = self.columnindexmap.get(col_id);
+
+        let number_of_buckets = tmap.number_of_buckets;
+        let bucket_mask = (number_of_buckets - 1) as u64;
+
+        if !is_binary {
+            let output: Vec<ColumnWrapper> = tmap
+                .bucket_number_of_elements
+                .par_iter()
+                .map(|i| iop.new_uninit(*i, 0, with_bitmap))
+                .collect();
+
+            let unsafe_output = UnsafeOutput {
+                data: UnsafeCell::new(output),
+            };
+
+            self.columns
+                .par_chunks(chunk_size)
+                .zip_eq(self.indexes.par_chunks(chunk_size))
+                .zip_eq(tmap.write_offsets.par_iter())
+                .zip_eq(hash.par_chunks(chunk_size))
+                .for_each(|(((columns, indexes), write_offsets), h)| {
+                    let output = &mut *unsafe_output.data.get();
+                    iop.copy_to_buckets_part1(
+                        h,
+                        bucket_mask,
+                        columns,
+                        indexes,
+                        *col_id,
+                        &c_index,
+                        write_offsets,
+                        output,
+                        with_bitmap,
+                    )
+                    .unwrap();
+                });
+            let output = unsafe_output.data.into_inner();
+
+            let output: Vec<_> = output
+                .into_par_iter()
+                .map(|c| iop.assume_init(c).unwrap())
+                .collect();
+            output
+        } else {
+            let output: Vec<ColumnWrapper> = tmap
+                .bucket_number_of_elements
+                .par_iter()
+                .map(|i| iop.new_uninit(*i, 0, with_bitmap))
+                .collect();
+
+            let unsafe_output = UnsafeOutput {
+                data: UnsafeCell::new(output),
+            };
+
+            self.columns
+                .par_chunks(chunk_size)
+                .zip_eq(self.indexes.par_chunks(chunk_size))
+                .zip_eq(tmap.write_offsets.par_iter())
+                .zip_eq(hash.par_chunks(chunk_size))
+                .for_each(|(((columns, indexes), write_offsets), h)| {
+                    let output = &mut *unsafe_output.data.get();
+                    iop.copy_to_buckets_part1(
+                        h,
+                        bucket_mask,
+                        columns,
+                        indexes,
+                        *col_id,
+                        &c_index,
+                        write_offsets,
+                        output,
+                        with_bitmap,
+                    )
+                    .unwrap();
+                });
+            let mut output = unsafe_output.data.into_inner();
+
+            output.iter_mut().for_each(|c| {
+                iop.copy_to_buckets_part2(c).unwrap();
+            });
+
+            let unsafe_output = UnsafeOutput {
+                data: UnsafeCell::new(output),
+            };
+
+            self.columns
+                .par_chunks(chunk_size)
+                .zip_eq(self.indexes.par_chunks(chunk_size))
+                .zip_eq(tmap.write_offsets.par_iter())
+                .zip_eq(hash.par_chunks(chunk_size))
+                .for_each(|(((columns, indexes), write_offsets), h)| {
+                    let output = &mut *unsafe_output.data.get();
+                    iop.copy_to_buckets_part3(
+                        h,
+                        bucket_mask,
+                        columns,
+                        indexes,
+                        *col_id,
+                        &c_index,
+                        write_offsets,
+                        output,
+                    )
+                    .unwrap();
+                });
+            let output = unsafe_output.data.into_inner();
+
+            output
+        }
     }
 }
