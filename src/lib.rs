@@ -627,4 +627,63 @@ mod tests {
             assert_eq!(c_part_2_expected, c_part_2);
         }
     }
+    #[test]
+    fn columns_groups() {
+        /*rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build_global()
+        .unwrap();*/
+        let dict = Dictionary::new();
+
+        let mut t: Table = Table::new(vec![4, 5]);
+
+        let c1_names: Vec<String> = vec![
+            "1A".to_string(),
+            "1A".to_string(),
+            "3A".to_string(),
+            "3A".to_string(),
+            "5A".to_string(),
+            "6A".to_string(),
+            "7A".to_string(),
+            "8A".to_string(),
+            "8A".to_string(),
+        ];
+        let c1_bitmap: Vec<bool> = vec![true, false, true, true, true, true, true, true, true];
+
+        let c2_names: Vec<String> = vec![
+            "1A".to_string(),
+            "2A".to_string(),
+            "3A".to_string(),
+            "4A".to_string(),
+            "5A".to_string(),
+            "6A".to_string(),
+            "7A".to_string(),
+            "8A".to_string(),
+            "7A".to_string(),
+        ];
+        let c2_bitmap: Vec<bool> = vec![true, true, true, true, true, true, false, true, false];
+
+        t.push_with_bitmap(&dict, &c1_names, &c1_bitmap).unwrap();
+
+        t.push_with_bitmap(&dict, &c2_names, &c2_bitmap).unwrap();
+
+        let c2_index: PartitionedIndex = vec![
+            ColumnDataF::new(vec![0, 0, 2, 2]),
+            ColumnDataF::new(vec![0, 0, 2, 2, 4]),
+        ];
+
+        t.push_index(c2_index, &[1]).unwrap();
+        let h1 = t.build_groups(&dict, &[1]);
+        let h1: Vec<_> = h1.iter().flatten().map(|i| *i).collect();
+        t.push(&dict, &h1).unwrap();
+
+        let h2 = t.build_groups(&dict, &[1, 0]);
+        let h2: Vec<_> = h2.iter().flatten().map(|i| *i).collect();
+        t.push(&dict, &h2).unwrap();
+
+        assert_eq!(h1, vec![0, 0, 2, 2, 0, 0, 2, 2, 2]);
+        assert_eq!(h2, vec![0, 1, 2, 2, 0, 1, 2, 3, 3]);
+
+        //t.print(&dict).unwrap();
+    }
 }

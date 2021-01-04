@@ -575,6 +575,59 @@ impl<'a> Table<'a> {
         });
         output
     }
+
+    pub fn build_groups(&self, dict: &Dictionary, input_ids: &[usize]) -> Vec<Vec<usize>> {
+        let num_of_cpus = num_cpus::get();
+        let chunk_size = (self.partition_sizes.len() + num_of_cpus - 1) / num_of_cpus;
+
+        //TO-DO: Switch to general execution framework
+        let mut output: Vec<Vec<usize>> = self
+            .partition_sizes
+            .par_iter()
+            .map(|i| vec![0; *i])
+            .collect();
+        let index_empty = ColumnDataF::<usize>::None;
+
+        input_ids.iter().for_each(|col_id| {
+            let signature = Signature::new(
+                "" as &str,
+                vec![self.columns[0][*col_id].column().item_type_id()],
+            );
+            let iop = dict.columninternal.get(&signature).unwrap();
+            let c_index = self.columnindexmap.get(col_id);
+            self.columns
+                .par_chunks(chunk_size)
+                .zip_eq(self.indexes.par_chunks(chunk_size))
+                .zip_eq(output.par_chunks_mut(chunk_size))
+                .for_each(|((columns, indexes), output)| {
+                    let mut hashmap_buffer = HashMapBuffer::new();
+                    let mut hashmap_binary: HashMap<
+                        NullableValue<&[u8]>,
+                        usize,
+                        ahash::RandomState,
+                    > = HashMap::with_capacity_and_hasher(100, ahash::RandomState::default());
+
+                    columns.iter().zip(indexes).zip(output).for_each(
+                        |((columns, indexes), output)| {
+                            let c_index = match c_index {
+                                Some(i) => &indexes[*i],
+                                None => &index_empty,
+                            };
+                            let c = &columns[*col_id];
+                            iop.group_in(
+                                c,
+                                c_index,
+                                output,
+                                &mut hashmap_buffer,
+                                &mut hashmap_binary,
+                            )
+                            .unwrap()
+                        },
+                    );
+                });
+        });
+        output
+    }
     pub unsafe fn column_repartition(
         &self,
         dict: &Dictionary,

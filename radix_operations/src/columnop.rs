@@ -1,6 +1,9 @@
-use std::hash::{BuildHasher, Hash, Hasher};
 use std::mem::MaybeUninit;
 use std::{any::Any, collections::VecDeque};
+use std::{
+    collections::HashMap,
+    hash::{BuildHasher, Hash, Hasher},
+};
 
 use paste::paste;
 
@@ -195,6 +198,14 @@ pub trait ColumnInternalOp {
         offsets: &VecDeque<usize>,
         dst: &mut [ColumnWrapper<'static>],
     ) -> Result<usize, ErrorDesc>;
+    fn group_in(
+        &self,
+        src: &ColumnWrapper,
+        src_index: &ColumnDataF<usize>,
+        dst: &mut Vec<usize>,
+        hashmap_buffer: &mut HashMapBuffer,
+        hashmap_binary: &mut HashMap<NullableValue<&[u8]>, usize, ahash::RandomState>,
+    ) -> Result<(), ErrorDesc>;
 }
 
 const OP: &str = "";
@@ -417,11 +428,12 @@ macro_rules! sized_types_impl {
                                 dst.iter_mut().for_each(|h| *h=h.wrapping_add(hash_value));
                             } else {
                                 //The source is not a constant value, therefore we have to make sure it has the same length as the hash vector
-                                assert_eq!(dst.len(), src_data.len());
+
 
                                 match (src_index.is_some(), src_bitmap.is_some()){
                                     (true, true)=>{
                                         let src_index=src_index.downcast_ref()?;
+                                        assert_eq!(src_index.len(), dst.len());
                                         let src_bitmap=src_bitmap.downcast_ref()?;
                                         let itr=src_index.iter().map(|i| {
                                             let data=src_data[*i];
@@ -434,6 +446,7 @@ macro_rules! sized_types_impl {
                                     },
                                     (true, false)=>{
                                         let src_index=src_index.downcast_ref()?;
+                                        assert_eq!(src_index.len(), dst.len());
                                         let itr=src_index.iter().map(|i| {
                                             let data=src_data[*i];
                                             let mut h = s.build_hasher();
@@ -444,6 +457,7 @@ macro_rules! sized_types_impl {
                                     },
                                     (false, true)=>{
                                         let src_bitmap=src_bitmap.downcast_ref()?;
+                                        assert_eq!(src_data.len(), dst.len());
                                         let itr=src_data.iter().zip(src_bitmap).map(|(data, bitmap)| {
                                             let mut h = s.build_hasher();
                                             data.hash(&mut h);
@@ -452,6 +466,7 @@ macro_rules! sized_types_impl {
                                         dst.iter_mut().zip(itr).for_each(|(h, hash_value)| *h=h.wrapping_add(hash_value));
                                     },
                                     (false, false)=>{
+                                        assert_eq!(src_data.len(), dst.len());
                                         let itr=src_data.iter().map(|data| {
                                             let mut h = s.build_hasher();
                                             data.hash(&mut h);
@@ -524,6 +539,141 @@ macro_rules! sized_types_impl {
                     _offsets: &VecDeque<usize>,
                     _dst: &mut [ColumnWrapper<'static>],
                 ) -> Result<usize, ErrorDesc>{Err("copy_to_buckets_part2 called for a sized type")?}
+
+                fn group_in(
+                    &self,
+                    src: &ColumnWrapper,
+                    src_index: &ColumnDataF<usize>,
+                    dst: &mut Vec<usize>,
+                    hashmap_buffer: &mut HashMapBuffer,
+                    _hashmap_binary: &mut HashMap<NullableValue<&[u8]>, usize, ahash::RandomState>
+                ) -> Result<(), ErrorDesc>{
+                    type T=$tr;
+                    let src_data=src.column().downcast_ref::<T>()?;
+                    let src_bitmap=src.bitmap();
+
+                    let mut h=hashmap_buffer.pop::<T>();
+                    /*
+                    let src=src.column().downcast_ref::<T>()?;
+
+
+
+                    if src_index.is_some(){
+                        let src_index=src_index.downcast_ref()?;
+                        assert_eq!(src_index.len(), dst.len());
+                        src_index.iter().zip(dst.iter_mut()).enumerate().for_each(|(i, (index, group_id))| {let new_group_id=h.entry(src[*index]).or_insert(i); *group_id=std::cmp::max(*group_id, *new_group_id)} );
+                        Ok(())
+                    } else {
+                        assert_eq!(src.len(), dst.len());
+                        src.iter().zip(dst.iter_mut()).enumerate().for_each(|(i, (value, group_id))| {let new_group_id=h.entry(*value).or_insert(i); *group_id=std::cmp::max(*group_id, *new_group_id)} );
+                        Ok(())
+                    }
+
+                    */
+
+                    if dst.len()==0{
+                        //We have to do an insert
+                        match (src_index.is_some(), src_bitmap.is_some()){
+                            (true, true)=>{
+                                let src_index=src_index.downcast_ref()?;
+                                let src_bitmap=src_bitmap.downcast_ref()?;
+                                let itr=src_index.iter().enumerate().map(|(i, index)| {
+                                    let data=src_data[*index];
+                                    let bitmap=src_bitmap[*index];
+
+                                    let new_group_id: usize=*h.entry(NullableValue{value: data, bitmap}).or_insert(i);
+                                    new_group_id
+
+                                });
+                                dst.extend(itr);
+                            },
+                            (true, false)=>{
+                                let src_index=src_index.downcast_ref()?;
+                                let itr=src_index.iter().enumerate().map(|(i, index)| {
+                                    let data=src_data[*index];
+                                    let bitmap=true;
+                                    let new_group_id: usize=*h.entry(NullableValue{value: data, bitmap}).or_insert(i);
+                                    new_group_id
+
+                                });
+                                dst.extend(itr);
+                            },
+                            (false, true)=>{
+                                let src_bitmap=src_bitmap.downcast_ref()?;
+                                let itr=src_data.iter().zip(src_bitmap).enumerate().map(|(i,(data, bitmap))| {
+                                    let new_group_id: usize=*h.entry(NullableValue{value: *data, bitmap: *bitmap}).or_insert(i);
+                                    new_group_id
+                                });
+                                dst.extend(itr);
+                            },
+                            (false, false)=>{
+                                let itr=src_data.iter().enumerate().map(|(i,data)| {
+                                    let new_group_id: usize=*h.entry(NullableValue{value: *data, bitmap: true}).or_insert(i);
+                                    new_group_id
+                                });
+                                dst.extend(itr);
+                            },
+                        }
+                        } else {
+                            //We have to do an update
+
+                            //First check if src is a const, do nothing
+                            if src.column().is_const(){
+                            } else {
+                                match (src_index.is_some(), src_bitmap.is_some()){
+                                    (true, true)=>{
+                                        let src_index=src_index.downcast_ref()?;
+                                        assert_eq!(src_index.len(), dst.len());
+                                        let src_bitmap=src_bitmap.downcast_ref()?;
+                                        let itr=src_index.iter().enumerate().map(|(i, index)| {
+                                            let data=src_data[*index];
+                                            let bitmap=src_bitmap[*index];
+                                            let new_group_id: usize=*h.entry(NullableValue{value: data, bitmap: bitmap}).or_insert(i);
+                                            new_group_id
+                                        });
+                                        dst.iter_mut().zip(itr).for_each(|(h, hash_value)| *h=h.wrapping_add(hash_value));
+                                    },
+                                    (true, false)=>{
+                                        let src_index=src_index.downcast_ref()?;
+                                        assert_eq!(src_index.len(), dst.len());
+                                        let itr=src_index.iter().enumerate().map(|(i, index)| {
+                                            let data=src_data[*index];
+                                            let bitmap=true;
+                                            let new_group_id: usize=*h.entry(NullableValue{value: data, bitmap}).or_insert(i);
+                                            new_group_id
+
+                                        });
+                                        dst.iter_mut().zip(itr).for_each(|(h, hash_value)| *h=h.wrapping_add(hash_value));
+                                    },
+                                    (false, true)=>{
+                                        assert_eq!(src_data.len(), dst.len());
+                                        let src_bitmap=src_bitmap.downcast_ref()?;
+                                        let itr=src_data.iter().zip(src_bitmap).enumerate().map(|(i,(data, bitmap))| {
+                                            let new_group_id: usize=*h.entry(NullableValue{value: *data, bitmap: *bitmap}).or_insert(i);
+                                            new_group_id
+                                        });
+                                        dst.iter_mut().zip(itr).for_each(|(h, hash_value)| *h=h.wrapping_add(hash_value));
+                                    },
+                                    (false, false)=>{
+                                        assert_eq!(src_data.len(), dst.len());
+                                        let itr=src_data.iter().enumerate().map(|(i,data)| {
+                                            let new_group_id: usize=*h.entry(NullableValue{value: *data, bitmap: true}).or_insert(i);
+                                            new_group_id
+                                        });
+                                        dst.iter_mut().zip(itr).for_each(|(h, hash_value)| *h=h.wrapping_add(hash_value));
+                                    },
+                                }
+                            }
+                        }
+                        Ok(())
+
+
+
+
+
+
+
+                }
             }
 
     }
@@ -735,12 +885,12 @@ macro_rules! binary_types_impl {
                                 dst.iter_mut().for_each(|h| *h=h.wrapping_add(hash_value));
                             } else {
                                 //The source is not a constant value, therefore we have to make sure it has the same length as the hash vector
-                                assert_eq!(dst.len(), start_pos.len());
-                                assert_eq!(dst.len(), len.len());
+
 
                                 match (src_index.is_some(), src_bitmap.is_some()){
                                     (true, true)=>{
                                         let src_index=src_index.downcast_ref()?;
+                                        assert_eq!(src_index.len(), dst.len());
                                         let src_bitmap=src_bitmap.downcast_ref()?;
                                         let itr=src_index.iter().map(|i| {
                                             let start=start_pos[*i]-offset;
@@ -755,6 +905,7 @@ macro_rules! binary_types_impl {
                                     },
                                     (true, false)=>{
                                         let src_index=src_index.downcast_ref()?;
+                                        assert_eq!(src_index.len(), dst.len());
                                         let itr=src_index.iter().map(|i| {
                                             let start=start_pos[*i]-offset;
                                             let end=start+len[*i];
@@ -767,6 +918,8 @@ macro_rules! binary_types_impl {
                                     },
                                     (false, true)=>{
                                         let src_bitmap=src_bitmap.downcast_ref()?;
+                                        assert_eq!(dst.len(), start_pos.len());
+                                        assert_eq!(dst.len(), len.len());
                                         let itr=start_pos.iter().zip(len.iter()).zip(src_bitmap).map(|((start_pos, len), bitmap)| {
                                             let start=start_pos-offset;
                                             let end=start+len;
@@ -778,6 +931,8 @@ macro_rules! binary_types_impl {
                                         dst.iter_mut().zip(itr).for_each(|(h, hash_value)| *h=h.wrapping_add(hash_value));
                                     },
                                     (false, false)=>{
+                                        assert_eq!(dst.len(), start_pos.len());
+                                        assert_eq!(dst.len(), len.len());
                                         let itr=start_pos.iter().zip(len.iter()).map(|(start_pos, len)| {
                                             let start=start_pos-offset;
                                             let end=start+len;
@@ -882,6 +1037,224 @@ macro_rules! binary_types_impl {
                         bytes_written+=copy_to_buckets_binary_part(hash, buckets_mask, src_datau8,src_start_pos, src_len,src_offset , src_index, &mut offsets_tmp, &mut dst_data).unwrap();
                     });
                     Ok(bytes_written)
+                }
+
+                fn group_in(
+                    &self,
+                    src: &ColumnWrapper,
+                    src_index: &ColumnDataF<usize>,
+                    dst: &mut Vec<usize>,
+                    _hashmap_buffer: &mut HashMapBuffer,
+                    hashmap_binary: &mut HashMap<NullableValue<&[u8]>, usize, ahash::RandomState>
+                ) -> Result<(), ErrorDesc>{
+                    type T=$tr;
+                    let (datau8, start_pos,len,offset)=src.column().downcast_binary_ref::<T>().unwrap();
+                    let src_bitmap=src.bitmap();
+                    hashmap_binary.clear();
+
+                    /*
+                    if src_index.is_some(){
+                        let src_index=src_index.downcast_ref()?;
+                        assert_eq!(src_index.len(), dst.len());
+                        src_index.iter().zip(dst.iter_mut()).enumerate().for_each(|(i, (index, group_id))| {
+                            let start_u8 = src_start_pos[*index] - src_offset;
+                            let end_u8 = start_u8 + src_len[*index];
+                            let slice_read = &src_datau8[start_u8..end_u8];
+                            //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
+                            //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
+                            //        having to drop hashmap_binary.
+                            let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(slice_read)}).or_insert(i);
+                            *group_id=std::cmp::max(*group_id, *new_group_id)
+                        } );
+                        hashmap_binary.clear();
+                        Ok(())
+                    } else {
+                        assert_eq!(src_len.len(), dst.len());
+                        src_start_pos.iter().zip(src_len).zip(dst.iter_mut()).enumerate().for_each(|(i,((start_pos,  len), group_id))|{
+                            let start_u8 = start_pos - src_offset;
+                            let end_u8 = start_u8 + len;
+                            let slice_read = &src_datau8[start_u8..end_u8];
+                            //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
+                            //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
+                            //        having to drop hashmap_binary.
+
+                            let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(slice_read)}).or_insert(i);
+                            *group_id=std::cmp::max(*group_id, *new_group_id);
+                        });
+                        hashmap_binary.clear();
+
+                    */
+
+                    if dst.len()==0{
+                        //We have to do an insert
+                        match (src_index.is_some(), src_bitmap.is_some()){
+                            (true, true)=>{
+                                let src_index=src_index.downcast_ref()?;
+                                let src_bitmap=src_bitmap.downcast_ref()?;
+                                let itr=src_index.iter().enumerate().map(|(i, index)| {
+                                    let start=start_pos[*index]-offset;
+                                    let end=start+len[*index];
+                                    let data=&datau8[start..end];
+                                    let bitmap=src_bitmap[*index];
+                                    let nullableslice=NullableValue{
+                                        value: data,
+                                        bitmap
+                                    };
+                                    //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
+                                    //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
+                                    //        having to drop hashmap_binary.
+                                    let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
+                                    *new_group_id
+                                });
+                                dst.extend(itr);
+                            },
+                            (true, false)=>{
+                                let src_index=src_index.downcast_ref()?;
+                                let itr=src_index.iter().enumerate().map(|(i, index)| {
+                                    let start=start_pos[*index]-offset;
+                                    let end=start+len[*index];
+                                    let data=&datau8[start..end];
+                                    let nullableslice=NullableValue{
+                                        value: data,
+                                        bitmap: true,
+                                    };
+                                    //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
+                                    //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
+                                    //        having to drop hashmap_binary.
+                                    let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
+                                    *new_group_id
+                                });
+                                dst.extend(itr);
+                            },
+                            (false, true)=>{
+                                let src_bitmap=src_bitmap.downcast_ref()?;
+                                let itr=start_pos.iter().zip(len.iter()).zip(src_bitmap).enumerate().map(|(i,((start_pos, len), bitmap))| {
+                                    let start=start_pos-offset;
+                                    let end=start+len;
+                                    let data=&datau8[start..end];
+                                    let nullableslice=NullableValue{
+                                        value: data,
+                                        bitmap: *bitmap,
+                                    };
+                                    //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
+                                    //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
+                                    //        having to drop hashmap_binary.
+                                    let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
+                                    *new_group_id
+                                });
+                                dst.extend(itr);
+                            },
+                            (false, false)=>{
+                                let itr=start_pos.iter().zip(len.iter()).enumerate().map(|(i,(start_pos, len))| {
+                                    let start=start_pos-offset;
+                                    let end=start+len;
+                                    let data=&datau8[start..end];
+                                    let nullableslice=NullableValue{
+                                        value: data,
+                                        bitmap: true,
+                                    };
+                                    //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
+                                    //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
+                                    //        having to drop hashmap_binary.
+                                    let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
+                                    *new_group_id
+                                });
+                                dst.extend(itr);
+                            },
+                        }
+                    } else {
+                        //We have to do an update
+
+
+                        //First check if src is a const
+                        if src.column().is_const(){
+                            //in case of constant, then we have nothing to do
+                        } else {
+
+                            match (src_index.is_some(), src_bitmap.is_some()){
+                                (true, true)=>{
+                                    let src_index=src_index.downcast_ref()?;
+                                    let src_bitmap=src_bitmap.downcast_ref()?;
+                                    let itr=src_index.iter().enumerate().map(|(i, index)| {
+                                        let start=start_pos[*index]-offset;
+                                        let end=start+len[*index];
+                                        let data=&datau8[start..end];
+                                        let bitmap=src_bitmap[*index];
+                                        let nullableslice=NullableValue{
+                                            value: data,
+                                            bitmap
+                                        };
+                                        //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
+                                        //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
+                                        //        having to drop hashmap_binary.
+                                        let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
+                                        *new_group_id
+                                    });
+                                    dst.iter_mut().zip(itr).for_each(|(group_id, new_group_id)| *group_id=std::cmp::max(*group_id, new_group_id));
+                                },
+                                (true, false)=>{
+                                    let src_index=src_index.downcast_ref()?;
+                                    let itr=src_index.iter().enumerate().map(|(i, index)| {
+                                        let start=start_pos[*index]-offset;
+                                        let end=start+len[*index];
+                                        let data=&datau8[start..end];
+                                        let nullableslice=NullableValue{
+                                            value: data,
+                                            bitmap: true,
+                                        };
+                                        //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
+                                        //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
+                                        //        having to drop hashmap_binary.
+                                        let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
+                                        *new_group_id
+                                    });
+                                    dst.iter_mut().zip(itr).for_each(|(group_id, new_group_id)| *group_id=std::cmp::max(*group_id, new_group_id));
+                                },
+                                (false, true)=>{
+                                    let src_bitmap=src_bitmap.downcast_ref()?;
+                                    let itr=start_pos.iter().zip(len.iter()).zip(src_bitmap).enumerate().map(|(i,((start_pos, len), bitmap))| {
+                                        let start=start_pos-offset;
+                                        let end=start+len;
+                                        let data=&datau8[start..end];
+                                        let nullableslice=NullableValue{
+                                            value: data,
+                                            bitmap: *bitmap,
+                                        };
+                                        //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
+                                        //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
+                                        //        having to drop hashmap_binary.
+                                        let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
+                                        *new_group_id
+                                    });
+                                    dst.iter_mut().zip(itr).for_each(|(group_id, new_group_id)| *group_id=std::cmp::max(*group_id, new_group_id));
+                                },
+                                (false, false)=>{
+                                    let itr=start_pos.iter().zip(len.iter()).enumerate().map(|(i,(start_pos, len))| {
+                                        let start=start_pos-offset;
+                                        let end=start+len;
+                                        let data=&datau8[start..end];
+                                        let nullableslice=NullableValue{
+                                            value: data,
+                                            bitmap: true,
+                                        };
+                                        //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
+                                        //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
+                                        //        having to drop hashmap_binary.
+                                        let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
+                                        *new_group_id
+                                    });
+                                    dst.iter_mut().zip(itr).for_each(|(group_id, new_group_id)| *group_id=std::cmp::max(*group_id, new_group_id));
+                                },
+                            }
+                        }
+                    }
+
+
+
+
+
+                        Ok(())
+
                 }
 
             }

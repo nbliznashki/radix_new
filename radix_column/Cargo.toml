@@ -12,7 +12,7 @@ edition = "2018"
 #paste="1.0.0"
 #rayon="1.5.0"
 #prettytable-rs = "0.8.0"
-#ahash="0.6"
+ahash="0.6"
 
 
 
