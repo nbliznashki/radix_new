@@ -6,7 +6,10 @@ pub use table::*;
 #[cfg(test)]
 mod tests {
 
-    use crate::{filter, tabletotable::TableToTableMap, PartitionedIndex, Table, TableExpression};
+    use crate::{
+        filter, tabletotable::TableToTableMap, ExpressionInput, PartitionedIndex, Table,
+        TableExpression,
+    };
     use radix_column::*;
     use radix_operations::*;
 
@@ -674,16 +677,85 @@ mod tests {
 
         t.push_index(c2_index, &[1]).unwrap();
         let h1 = t.build_groups(&dict, &[1]);
-        let h1: Vec<_> = h1.iter().flatten().map(|i| *i).collect();
+        let h1: Vec<_> = h1.iter().map(|(v, _)| v).flatten().map(|i| *i).collect();
         t.push(&dict, &h1).unwrap();
 
         let h2 = t.build_groups(&dict, &[1, 0]);
-        let h2: Vec<_> = h2.iter().flatten().map(|i| *i).collect();
+        let h2: Vec<_> = h2.iter().map(|(v, _)| v).flatten().map(|i| *i).collect();
         t.push(&dict, &h2).unwrap();
 
-        assert_eq!(h1, vec![0, 0, 2, 2, 0, 0, 2, 2, 2]);
+        assert_eq!(h1, vec![0, 0, 1, 1, 0, 0, 1, 1, 1]);
         assert_eq!(h2, vec![0, 1, 2, 2, 0, 1, 2, 3, 3]);
 
-        //t.print(&dict).unwrap();
+        t.print(&dict).unwrap();
+    }
+    #[test]
+    fn columns_group_expression() {
+        /*rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build_global()
+        .unwrap();*/
+        let dict = Dictionary::new();
+
+        let mut t: Table = Table::new(vec![4, 5]);
+
+        let c1_names: Vec<String> = vec![
+            "1A".to_string(),
+            "1A".to_string(),
+            "3A".to_string(),
+            "3A".to_string(),
+            "5A".to_string(),
+            "6A".to_string(),
+            "5A".to_string(),
+            "8A".to_string(),
+            "8A".to_string(),
+        ];
+        let c1_bitmap: Vec<bool> = vec![true, false, true, true, true, true, true, true, true];
+
+        let c2_names: Vec<u64> = vec![1, 2, 3, 4, 5, 6, 7, 8, 7];
+        let c2_bitmap: Vec<bool> = vec![true, true, true, true, true, true, true, true, false];
+
+        t.push_with_bitmap(&dict, &c1_names, &c1_bitmap).unwrap();
+
+        t.push_with_bitmap(&dict, &c2_names, &c2_bitmap).unwrap();
+
+        let c2_index: PartitionedIndex = vec![
+            ColumnDataF::new(vec![0, 0, 2, 2]),
+            ColumnDataF::new(vec![0, 0, 2, 2, 4]),
+        ];
+
+        t.push_index(c2_index, &[1]).unwrap();
+        let h1 = t.build_groups(&dict, &[1]);
+        let h1_group_id: Vec<_> = h1.iter().map(|(v, _)| v).flatten().map(|i| *i).collect();
+        t.push(&dict, &h1_group_id).unwrap();
+        let h1_num_groups: Vec<Vec<usize>> = h1
+            .iter()
+            .map(|(v, i)| (0..v.len()).into_iter().map(|_| *i).collect())
+            .collect();
+        let h1_num_groups: Vec<_> = h1_num_groups.into_iter().flatten().collect();
+        t.push(&dict, &h1_num_groups).unwrap();
+        let h2 = t.build_groups(&dict, &[1, 0]);
+        let h2_group_id: Vec<_> = h2.iter().map(|(v, _)| v).flatten().map(|i| *i).collect();
+        t.push(&dict, &h2_group_id).unwrap();
+
+        let h2_num_groups: Vec<Vec<usize>> = h2
+            .iter()
+            .map(|(v, i)| (0..v.len()).into_iter().map(|_| *i).collect())
+            .collect();
+        let h2_num_groups: Vec<_> = h2_num_groups.into_iter().flatten().collect();
+        t.push(&dict, &h2_num_groups).unwrap();
+
+        t.print(&dict).unwrap();
+
+        let mut e = TableExpression::new("sum", &[1]);
+        e.partition_by.push(ExpressionInput::Column(0));
+        //e.expand_node(500, "+", &[0, 500]).unwrap();
+        //e.expand_node(500, "+", &[1, 2]).unwrap();
+
+        //let const_val = &ColumnWrapper::new_const(&dict, 16u32);
+        //e.expand_node_as_const(1000, &mut Some(const_val)).unwrap();
+
+        t.add_expression_as_new_column(&dict, &e);
+        t.print(&dict).unwrap();
     }
 }

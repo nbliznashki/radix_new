@@ -1,10 +1,13 @@
 pub mod c_add;
 pub mod c_addassign;
+pub mod c_count;
 pub mod c_eq;
 pub mod c_gt;
 pub mod c_gteq;
 pub mod c_lt;
 pub mod c_lteq;
+pub mod c_max;
+pub mod c_sum;
 pub mod column_operations;
 pub mod columnop;
 pub mod dictionary;

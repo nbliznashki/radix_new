@@ -1,4 +1,4 @@
-use std::{any::TypeId, mem::MaybeUninit};
+use std::{any::TypeId, collections::HashMap, mem::MaybeUninit};
 
 use crate::*;
 use radix_column::*;
@@ -62,6 +62,14 @@ pub trait ColumnOperations<'a> {
     ) -> Result<Vec<String>, ErrorDesc>;
 
     fn to_const<T: 'static + Send + Sync>(&self, dict: &Dictionary) -> Result<T, ErrorDesc>;
+    fn group_in(
+        &self,
+        dict: &Dictionary,
+        src_index: &ColumnDataF<usize>,
+        dst: &mut Vec<usize>,
+        hashmap_buffer: &mut HashMapBuffer,
+        hashmap_binary: &mut HashMap<(usize, NullableValue<&[u8]>), usize, ahash::RandomState>,
+    ) -> Result<(), ErrorDesc>;
 }
 
 impl<'a> ColumnOperations<'a> for ColumnWrapper<'a> {
@@ -139,6 +147,25 @@ impl<'a> ColumnOperations<'a> for ColumnWrapper<'a> {
         let internaloperator = dict.columninternal.get(&signature);
         match internaloperator {
             Some(iop) => iop.hash_in(&self, src_index, hash_column),
+            None => Err(format!(
+                "The following internal column operation not found in dictionary: {:?}",
+                signature
+            ))?,
+        }
+    }
+
+    fn group_in(
+        &self,
+        dict: &Dictionary,
+        src_index: &ColumnDataF<usize>,
+        dst: &mut Vec<usize>,
+        hashmap_buffer: &mut HashMapBuffer,
+        hashmap_binary: &mut HashMap<(usize, NullableValue<&[u8]>), usize, ahash::RandomState>,
+    ) -> Result<(), ErrorDesc> {
+        let signature = Signature::new("" as &str, vec![self.column().item_type_id()]);
+        let internaloperator = dict.columninternal.get(&signature);
+        match internaloperator {
+            Some(iop) => iop.group_in(&self, src_index, dst, hashmap_buffer, hashmap_binary),
             None => Err(format!(
                 "The following internal column operation not found in dictionary: {:?}",
                 signature

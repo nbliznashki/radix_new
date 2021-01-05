@@ -204,7 +204,7 @@ pub trait ColumnInternalOp {
         src_index: &ColumnDataF<usize>,
         dst: &mut Vec<usize>,
         hashmap_buffer: &mut HashMapBuffer,
-        hashmap_binary: &mut HashMap<NullableValue<&[u8]>, usize, ahash::RandomState>,
+        hashmap_binary: &mut HashMap<(usize, NullableValue<&[u8]>), usize, ahash::RandomState>,
     ) -> Result<(), ErrorDesc>;
 }
 
@@ -546,30 +546,14 @@ macro_rules! sized_types_impl {
                     src_index: &ColumnDataF<usize>,
                     dst: &mut Vec<usize>,
                     hashmap_buffer: &mut HashMapBuffer,
-                    _hashmap_binary: &mut HashMap<NullableValue<&[u8]>, usize, ahash::RandomState>
+                    _hashmap_binary: &mut HashMap<(usize, NullableValue<&[u8]>), usize, ahash::RandomState>,
                 ) -> Result<(), ErrorDesc>{
                     type T=$tr;
                     let src_data=src.column().downcast_ref::<T>()?;
                     let src_bitmap=src.bitmap();
 
                     let mut h=hashmap_buffer.pop::<T>();
-                    /*
-                    let src=src.column().downcast_ref::<T>()?;
 
-
-
-                    if src_index.is_some(){
-                        let src_index=src_index.downcast_ref()?;
-                        assert_eq!(src_index.len(), dst.len());
-                        src_index.iter().zip(dst.iter_mut()).enumerate().for_each(|(i, (index, group_id))| {let new_group_id=h.entry(src[*index]).or_insert(i); *group_id=std::cmp::max(*group_id, *new_group_id)} );
-                        Ok(())
-                    } else {
-                        assert_eq!(src.len(), dst.len());
-                        src.iter().zip(dst.iter_mut()).enumerate().for_each(|(i, (value, group_id))| {let new_group_id=h.entry(*value).or_insert(i); *group_id=std::cmp::max(*group_id, *new_group_id)} );
-                        Ok(())
-                    }
-
-                    */
 
                     if dst.len()==0{
                         //We have to do an insert
@@ -581,7 +565,7 @@ macro_rules! sized_types_impl {
                                     let data=src_data[*index];
                                     let bitmap=src_bitmap[*index];
 
-                                    let new_group_id: usize=*h.entry(NullableValue{value: data, bitmap}).or_insert(i);
+                                    let new_group_id: usize=*h.entry((0, NullableValue{value: data, bitmap})).or_insert(i);
                                     new_group_id
 
                                 });
@@ -592,7 +576,7 @@ macro_rules! sized_types_impl {
                                 let itr=src_index.iter().enumerate().map(|(i, index)| {
                                     let data=src_data[*index];
                                     let bitmap=true;
-                                    let new_group_id: usize=*h.entry(NullableValue{value: data, bitmap}).or_insert(i);
+                                    let new_group_id: usize=*h.entry((0, NullableValue{value: data, bitmap})).or_insert(i);
                                     new_group_id
 
                                 });
@@ -601,14 +585,14 @@ macro_rules! sized_types_impl {
                             (false, true)=>{
                                 let src_bitmap=src_bitmap.downcast_ref()?;
                                 let itr=src_data.iter().zip(src_bitmap).enumerate().map(|(i,(data, bitmap))| {
-                                    let new_group_id: usize=*h.entry(NullableValue{value: *data, bitmap: *bitmap}).or_insert(i);
+                                    let new_group_id: usize=*h.entry((0, NullableValue{value: *data, bitmap: *bitmap})).or_insert(i);
                                     new_group_id
                                 });
                                 dst.extend(itr);
                             },
                             (false, false)=>{
                                 let itr=src_data.iter().enumerate().map(|(i,data)| {
-                                    let new_group_id: usize=*h.entry(NullableValue{value: *data, bitmap: true}).or_insert(i);
+                                    let new_group_id: usize=*h.entry((0, NullableValue{value: *data, bitmap: true})).or_insert(i);
                                     new_group_id
                                 });
                                 dst.extend(itr);
@@ -625,42 +609,43 @@ macro_rules! sized_types_impl {
                                         let src_index=src_index.downcast_ref()?;
                                         assert_eq!(src_index.len(), dst.len());
                                         let src_bitmap=src_bitmap.downcast_ref()?;
-                                        let itr=src_index.iter().enumerate().map(|(i, index)| {
+                                        src_index.iter().zip(dst.iter_mut()).enumerate().for_each(|(i, (index, current_group_id))| {
                                             let data=src_data[*index];
                                             let bitmap=src_bitmap[*index];
-                                            let new_group_id: usize=*h.entry(NullableValue{value: data, bitmap: bitmap}).or_insert(i);
-                                            new_group_id
+
+                                            let new_group_id: usize=*h.entry((*current_group_id, NullableValue{value: data, bitmap})).or_insert(i);
+                                            *current_group_id=new_group_id;
+
                                         });
-                                        dst.iter_mut().zip(itr).for_each(|(h, hash_value)| *h=h.wrapping_add(hash_value));
+
                                     },
                                     (true, false)=>{
                                         let src_index=src_index.downcast_ref()?;
                                         assert_eq!(src_index.len(), dst.len());
-                                        let itr=src_index.iter().enumerate().map(|(i, index)| {
+                                        src_index.iter().zip(dst.iter_mut()).enumerate().for_each(|(i, (index, current_group_id))| {
                                             let data=src_data[*index];
                                             let bitmap=true;
-                                            let new_group_id: usize=*h.entry(NullableValue{value: data, bitmap}).or_insert(i);
-                                            new_group_id
+                                            let new_group_id: usize=*h.entry((*current_group_id, NullableValue{value: data, bitmap})).or_insert(i);
+                                            *current_group_id=new_group_id;
 
                                         });
-                                        dst.iter_mut().zip(itr).for_each(|(h, hash_value)| *h=h.wrapping_add(hash_value));
+
                                     },
                                     (false, true)=>{
                                         assert_eq!(src_data.len(), dst.len());
                                         let src_bitmap=src_bitmap.downcast_ref()?;
-                                        let itr=src_data.iter().zip(src_bitmap).enumerate().map(|(i,(data, bitmap))| {
-                                            let new_group_id: usize=*h.entry(NullableValue{value: *data, bitmap: *bitmap}).or_insert(i);
-                                            new_group_id
+                                        src_data.iter().zip(src_bitmap).zip(dst.iter_mut()).enumerate().for_each(|(i,((data, bitmap), current_group_id))| {
+                                            let new_group_id: usize=*h.entry((*current_group_id, NullableValue{value: *data, bitmap: *bitmap})).or_insert(i);
+                                            *current_group_id=new_group_id;
                                         });
-                                        dst.iter_mut().zip(itr).for_each(|(h, hash_value)| *h=h.wrapping_add(hash_value));
+
                                     },
                                     (false, false)=>{
                                         assert_eq!(src_data.len(), dst.len());
-                                        let itr=src_data.iter().enumerate().map(|(i,data)| {
-                                            let new_group_id: usize=*h.entry(NullableValue{value: *data, bitmap: true}).or_insert(i);
-                                            new_group_id
+                                        src_data.iter().zip(dst.iter_mut()).enumerate().for_each(|(i,(data, current_group_id))| {
+                                            let new_group_id: usize=*h.entry((*current_group_id, NullableValue{value: *data, bitmap: true})).or_insert(i);
+                                            *current_group_id=new_group_id;
                                         });
-                                        dst.iter_mut().zip(itr).for_each(|(h, hash_value)| *h=h.wrapping_add(hash_value));
                                     },
                                 }
                             }
@@ -1045,45 +1030,13 @@ macro_rules! binary_types_impl {
                     src_index: &ColumnDataF<usize>,
                     dst: &mut Vec<usize>,
                     _hashmap_buffer: &mut HashMapBuffer,
-                    hashmap_binary: &mut HashMap<NullableValue<&[u8]>, usize, ahash::RandomState>
+                    hashmap_binary: &mut HashMap<(usize, NullableValue<&[u8]>), usize, ahash::RandomState>,
                 ) -> Result<(), ErrorDesc>{
                     type T=$tr;
                     let (datau8, start_pos,len,offset)=src.column().downcast_binary_ref::<T>().unwrap();
                     let src_bitmap=src.bitmap();
                     hashmap_binary.clear();
 
-                    /*
-                    if src_index.is_some(){
-                        let src_index=src_index.downcast_ref()?;
-                        assert_eq!(src_index.len(), dst.len());
-                        src_index.iter().zip(dst.iter_mut()).enumerate().for_each(|(i, (index, group_id))| {
-                            let start_u8 = src_start_pos[*index] - src_offset;
-                            let end_u8 = start_u8 + src_len[*index];
-                            let slice_read = &src_datau8[start_u8..end_u8];
-                            //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
-                            //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
-                            //        having to drop hashmap_binary.
-                            let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(slice_read)}).or_insert(i);
-                            *group_id=std::cmp::max(*group_id, *new_group_id)
-                        } );
-                        hashmap_binary.clear();
-                        Ok(())
-                    } else {
-                        assert_eq!(src_len.len(), dst.len());
-                        src_start_pos.iter().zip(src_len).zip(dst.iter_mut()).enumerate().for_each(|(i,((start_pos,  len), group_id))|{
-                            let start_u8 = start_pos - src_offset;
-                            let end_u8 = start_u8 + len;
-                            let slice_read = &src_datau8[start_u8..end_u8];
-                            //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
-                            //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
-                            //        having to drop hashmap_binary.
-
-                            let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(slice_read)}).or_insert(i);
-                            *group_id=std::cmp::max(*group_id, *new_group_id);
-                        });
-                        hashmap_binary.clear();
-
-                    */
 
                     if dst.len()==0{
                         //We have to do an insert
@@ -1100,10 +1053,14 @@ macro_rules! binary_types_impl {
                                         value: data,
                                         bitmap
                                     };
+
+                                    let val: (usize, NullableValue<&[u8]>)=(0,nullableslice);
+
                                     //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
                                     //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
                                     //        having to drop hashmap_binary.
-                                    let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
+                                    let val: (usize, NullableValue<&[u8]>)=unsafe{std::mem::transmute(val)};
+                                    let new_group_id=hashmap_binary.entry(val).or_insert(i);
                                     *new_group_id
                                 });
                                 dst.extend(itr);
@@ -1118,10 +1075,13 @@ macro_rules! binary_types_impl {
                                         value: data,
                                         bitmap: true,
                                     };
+                                    let val: (usize, NullableValue<&[u8]>)=(0,nullableslice);
+
                                     //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
                                     //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
                                     //        having to drop hashmap_binary.
-                                    let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
+                                    let val: (usize, NullableValue<&[u8]>)=unsafe{std::mem::transmute(val)};
+                                    let new_group_id=hashmap_binary.entry(val).or_insert(i);
                                     *new_group_id
                                 });
                                 dst.extend(itr);
@@ -1136,10 +1096,13 @@ macro_rules! binary_types_impl {
                                         value: data,
                                         bitmap: *bitmap,
                                     };
+                                    let val: (usize, NullableValue<&[u8]>)=(0,nullableslice);
+
                                     //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
                                     //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
                                     //        having to drop hashmap_binary.
-                                    let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
+                                    let val: (usize, NullableValue<&[u8]>)=unsafe{std::mem::transmute(val)};
+                                    let new_group_id=hashmap_binary.entry(val).or_insert(i);
                                     *new_group_id
                                 });
                                 dst.extend(itr);
@@ -1153,10 +1116,13 @@ macro_rules! binary_types_impl {
                                         value: data,
                                         bitmap: true,
                                     };
+                                    let val: (usize, NullableValue<&[u8]>)=(0,nullableslice);
+
                                     //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
                                     //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
                                     //        having to drop hashmap_binary.
-                                    let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
+                                    let val: (usize, NullableValue<&[u8]>)=unsafe{std::mem::transmute(val)};
+                                    let new_group_id=hashmap_binary.entry(val).or_insert(i);
                                     *new_group_id
                                 });
                                 dst.extend(itr);
@@ -1175,7 +1141,7 @@ macro_rules! binary_types_impl {
                                 (true, true)=>{
                                     let src_index=src_index.downcast_ref()?;
                                     let src_bitmap=src_bitmap.downcast_ref()?;
-                                    let itr=src_index.iter().enumerate().map(|(i, index)| {
+                                    src_index.iter().zip(dst.iter_mut()).enumerate().for_each(|(i, (index, current_group_id))| {
                                         let start=start_pos[*index]-offset;
                                         let end=start+len[*index];
                                         let data=&datau8[start..end];
@@ -1184,17 +1150,20 @@ macro_rules! binary_types_impl {
                                             value: data,
                                             bitmap
                                         };
+                                        let val: (usize, NullableValue<&[u8]>)=(0,nullableslice);
+
                                         //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
                                         //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
                                         //        having to drop hashmap_binary.
-                                        let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
-                                        *new_group_id
+                                        let val: (usize, NullableValue<&[u8]>)=unsafe{std::mem::transmute(val)};
+                                        let new_group_id=hashmap_binary.entry(val).or_insert(i);
+                                        *current_group_id=*new_group_id;
                                     });
-                                    dst.iter_mut().zip(itr).for_each(|(group_id, new_group_id)| *group_id=std::cmp::max(*group_id, new_group_id));
+
                                 },
                                 (true, false)=>{
                                     let src_index=src_index.downcast_ref()?;
-                                    let itr=src_index.iter().enumerate().map(|(i, index)| {
+                                    src_index.iter().zip(dst.iter_mut()).enumerate().for_each(|(i, (index, current_group_id))| {
                                         let start=start_pos[*index]-offset;
                                         let end=start+len[*index];
                                         let data=&datau8[start..end];
@@ -1202,17 +1171,20 @@ macro_rules! binary_types_impl {
                                             value: data,
                                             bitmap: true,
                                         };
+                                        let val: (usize, NullableValue<&[u8]>)=(0,nullableslice);
+
                                         //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
                                         //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
                                         //        having to drop hashmap_binary.
-                                        let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
-                                        *new_group_id
+                                        let val: (usize, NullableValue<&[u8]>)=unsafe{std::mem::transmute(val)};
+                                        let new_group_id=hashmap_binary.entry(val).or_insert(i);
+                                        *current_group_id=*new_group_id;
                                     });
-                                    dst.iter_mut().zip(itr).for_each(|(group_id, new_group_id)| *group_id=std::cmp::max(*group_id, new_group_id));
+
                                 },
                                 (false, true)=>{
                                     let src_bitmap=src_bitmap.downcast_ref()?;
-                                    let itr=start_pos.iter().zip(len.iter()).zip(src_bitmap).enumerate().map(|(i,((start_pos, len), bitmap))| {
+                                    start_pos.iter().zip(len.iter()).zip(src_bitmap).zip(dst.iter_mut()).enumerate().for_each(|(i,(((start_pos, len), bitmap), current_group_id))| {
                                         let start=start_pos-offset;
                                         let end=start+len;
                                         let data=&datau8[start..end];
@@ -1220,16 +1192,19 @@ macro_rules! binary_types_impl {
                                             value: data,
                                             bitmap: *bitmap,
                                         };
+                                        let val: (usize, NullableValue<&[u8]>)=(0,nullableslice);
+
                                         //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
                                         //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
                                         //        having to drop hashmap_binary.
-                                        let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
-                                        *new_group_id
+                                        let val: (usize, NullableValue<&[u8]>)=unsafe{std::mem::transmute(val)};
+                                        let new_group_id=hashmap_binary.entry(val).or_insert(i);
+                                        *current_group_id=*new_group_id;
                                     });
-                                    dst.iter_mut().zip(itr).for_each(|(group_id, new_group_id)| *group_id=std::cmp::max(*group_id, new_group_id));
+
                                 },
                                 (false, false)=>{
-                                    let itr=start_pos.iter().zip(len.iter()).enumerate().map(|(i,(start_pos, len))| {
+                                    start_pos.iter().zip(len.iter()).zip(dst.iter_mut()).enumerate().for_each(|(i,((start_pos, len), current_group_id))| {
                                         let start=start_pos-offset;
                                         let end=start+len;
                                         let data=&datau8[start..end];
@@ -1237,13 +1212,16 @@ macro_rules! binary_types_impl {
                                             value: data,
                                             bitmap: true,
                                         };
+                                        let val: (usize, NullableValue<&[u8]>)=(0,nullableslice);
+
                                         //SAFETY: hashmap_binary would outlive the slice to src, however src is guaranteed to be live until the hashmap is cleared.
                                         //        Once the hashmap is cleared, there should be no references to src, and therefore no reason why we need to insist on
                                         //        having to drop hashmap_binary.
-                                        let new_group_id=hashmap_binary.entry(unsafe{std::mem::transmute(nullableslice)}).or_insert(i);
-                                        *new_group_id
+                                        let val: (usize, NullableValue<&[u8]>)=unsafe{std::mem::transmute(val)};
+                                        let new_group_id=hashmap_binary.entry(val).or_insert(i);
+                                        *current_group_id=*new_group_id;
                                     });
-                                    dst.iter_mut().zip(itr).for_each(|(group_id, new_group_id)| *group_id=std::cmp::max(*group_id, new_group_id));
+
                                 },
                             }
                         }

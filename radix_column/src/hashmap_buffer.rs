@@ -40,13 +40,15 @@ impl<'a> HashMapBuffer {
     }
     pub fn push<T: 'static>(
         &mut self,
-        mut h: Box<HashMap<NullableValue<T>, usize, ahash::RandomState>>,
+        mut h: Box<HashMap<(usize, NullableValue<T>), usize, ahash::RandomState>>,
     ) {
         h.clear();
         self.stored
             .push_back((Box::new(h) as Box<dyn Any + 'static>, TypeId::of::<T>()));
     }
-    pub fn pop<T: 'static>(&mut self) -> Box<HashMap<NullableValue<T>, usize, ahash::RandomState>> {
+    pub fn pop<T: 'static>(
+        &mut self,
+    ) -> Box<HashMap<(usize, NullableValue<T>), usize, ahash::RandomState>> {
         let item_type_id = TypeId::of::<T>();
         let pos = self.stored.iter().position(|c| c.1 == item_type_id);
         match pos {
@@ -55,14 +57,15 @@ impl<'a> HashMapBuffer {
                 .swap_remove_front(i)
                 .unwrap()
                 .0
-                .downcast::<HashMap<NullableValue<T>, usize, ahash::RandomState>>()
+                .downcast::<HashMap<(usize, NullableValue<T>), usize, ahash::RandomState>>()
                 .unwrap(),
-            None => Box::new(
-                HashMap::<NullableValue<T>, usize, ahash::RandomState>::with_capacity_and_hasher(
-                    100,
-                    ahash::RandomState::default(),
-                ),
-            ),
+            None => Box::new(HashMap::<
+                (usize, NullableValue<T>),
+                usize,
+                ahash::RandomState,
+            >::with_capacity_and_hasher(
+                100, ahash::RandomState::default()
+            )),
         }
     }
 }

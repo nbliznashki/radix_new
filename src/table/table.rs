@@ -480,14 +480,35 @@ impl<'a> Table<'a> {
             .zip_eq(self.partition_sizes.par_chunks_mut(chunk_size))
             .for_each(|((indexes, columns), partition_size)| {
                 let mut buffer = ColumnBuffer::new();
+                let mut hashmap_buffer = HashMapBuffer::new();
+                let mut hashmap_binary: HashMap<
+                    (usize, NullableValue<&[u8]>),
+                    usize,
+                    ahash::RandomState,
+                > = HashMap::with_capacity_and_hasher(100, ahash::RandomState::default());
+
                 indexes
                     .iter_mut()
                     .zip(columns.iter())
                     .zip(partition_size.iter_mut())
                     .for_each(|((indexes, columns), partition_size)| {
                         let result = expr
-                            .eval(dict, &mut buffer, columns, indexes, columnindexmap)
+                            .eval(
+                                dict,
+                                &mut buffer,
+                                &mut hashmap_buffer,
+                                &mut hashmap_binary,
+                                columns,
+                                indexes,
+                                columnindexmap,
+                            )
                             .unwrap();
+
+                        //TO-DO: use index!
+                        let result = match result {
+                            InputTypes::Owned(res, index) => res,
+                            _ => panic!(),
+                        };
                         let b = result.column().downcast_ref::<bool>().unwrap();
                         let bitmap = result.bitmap();
 
@@ -520,19 +541,53 @@ impl<'a> Table<'a> {
 
     //TO-DO - switch to a more general execution framework
     pub fn add_expression_as_new_column(&mut self, dict: &Dictionary, expr: &TableExpression) {
-        let (indexes, columnindexmap) = (&self.indexes, &self.columnindexmap);
+        let (indexes, columnindexmap) = (&mut self.indexes, &mut self.columnindexmap);
         let num_of_cpus = num_cpus::get();
         let chunk_size = (self.partition_sizes.len() + num_of_cpus - 1) / num_of_cpus;
+
+        let indexes_num = indexes[0].len();
+
         self.columns
             .par_chunks_mut(chunk_size)
-            .zip_eq(indexes.par_chunks(chunk_size))
+            .zip_eq(indexes.par_chunks_mut(chunk_size))
             .for_each(|(c, i)| {
                 let mut buffer = ColumnBuffer::new();
-                c.iter_mut().zip(i.iter()).for_each(|(c, i)| {
-                    let res = expr.eval(dict, &mut buffer, c, i, columnindexmap).unwrap();
-                    c.push(res);
+                let mut hashmap_buffer = HashMapBuffer::new();
+                let mut hashmap_binary: HashMap<
+                    (usize, NullableValue<&[u8]>),
+                    usize,
+                    ahash::RandomState,
+                > = HashMap::with_capacity_and_hasher(100, ahash::RandomState::default());
+
+                c.iter_mut().zip(i.iter_mut()).for_each(|(c, i)| {
+                    let res = expr
+                        .eval(
+                            dict,
+                            &mut buffer,
+                            &mut hashmap_buffer,
+                            &mut hashmap_binary,
+                            c,
+                            i,
+                            columnindexmap,
+                        )
+                        .unwrap();
+                    //TO-DO: use index!
+                    match res {
+                        InputTypes::Owned(res, index) => {
+                            c.push(res);
+                            if index.is_some() {
+                                i.push(index);
+                            }
+                        }
+                        _ => panic!(),
+                    }
                 });
             });
+
+        if indexes_num != indexes[0].len() {
+            columnindexmap.insert(self.columns[0].len() - 1, indexes_num);
+        }
+
         //TO-DO - fix this!!!
         self.columns_nullable.push(true);
     }
@@ -576,15 +631,15 @@ impl<'a> Table<'a> {
         output
     }
 
-    pub fn build_groups(&self, dict: &Dictionary, input_ids: &[usize]) -> Vec<Vec<usize>> {
+    pub fn build_groups(&self, dict: &Dictionary, input_ids: &[usize]) -> Vec<(Vec<usize>, usize)> {
         let num_of_cpus = num_cpus::get();
         let chunk_size = (self.partition_sizes.len() + num_of_cpus - 1) / num_of_cpus;
 
         //TO-DO: Switch to general execution framework
-        let mut output: Vec<Vec<usize>> = self
+        let mut output: Vec<(Vec<usize>, usize)> = self
             .partition_sizes
             .par_iter()
-            .map(|i| vec![0; *i])
+            .map(|i| (vec![0usize; *i], *i))
             .collect();
         let index_empty = ColumnDataF::<usize>::None;
 
@@ -602,7 +657,7 @@ impl<'a> Table<'a> {
                 .for_each(|((columns, indexes), output)| {
                     let mut hashmap_buffer = HashMapBuffer::new();
                     let mut hashmap_binary: HashMap<
-                        NullableValue<&[u8]>,
+                        (usize, NullableValue<&[u8]>),
                         usize,
                         ahash::RandomState,
                     > = HashMap::with_capacity_and_hasher(100, ahash::RandomState::default());
@@ -617,7 +672,7 @@ impl<'a> Table<'a> {
                             iop.group_in(
                                 c,
                                 c_index,
-                                output,
+                                &mut output.0,
                                 &mut hashmap_buffer,
                                 &mut hashmap_binary,
                             )
@@ -626,8 +681,22 @@ impl<'a> Table<'a> {
                     );
                 });
         });
+        output.par_chunks_mut(chunk_size).for_each(|output| {
+            output.iter_mut().for_each(|(v, number_of_groups)| {
+                let mut decrease_index_by = 0;
+                (1..v.len()).into_iter().for_each(|i| {
+                    decrease_index_by += (v[i] != i) as usize;
+                    v[i] = v[v[i]];
+                    let diff = ((v[i] != i) as usize).wrapping_sub(1); //If equal then 0 else FFFFFF
+                    let diff = diff & decrease_index_by;
+                    v[i] -= diff;
+                });
+                *number_of_groups -= decrease_index_by;
+            });
+        });
         output
     }
+
     pub unsafe fn column_repartition(
         &self,
         dict: &Dictionary,
