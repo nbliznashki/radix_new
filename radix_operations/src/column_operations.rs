@@ -34,7 +34,7 @@ pub trait ColumnOperations<'a> {
     fn hash_in(
         &self,
         dict: &Dictionary,
-        src_index: &ColumnDataF<'a, usize>,
+        src_index: &ColumnDataIndex<'a>,
         hash_column: &mut Vec<u64>,
     ) -> Result<(), ErrorDesc>;
 
@@ -44,28 +44,28 @@ pub trait ColumnOperations<'a> {
         &self,
         dict: &Dictionary,
         dst: &mut ColumnWrapper<'a>,
-        src_index: &ColumnDataF<'a, usize>,
+        src_index: &ColumnDataIndex<'a>,
     ) -> Result<(), ErrorDesc>;
 
     fn op(
         &mut self,
         dict: &Dictionary,
         op: &str,
-        c1_index: &ColumnDataF<'a, usize>,
+        c1_index: &ColumnDataIndex<'a>,
         input: &[InputTypes],
     ) -> Result<(), ErrorDesc>;
 
     fn as_string(
         &self,
         dict: &Dictionary,
-        src_index: &ColumnDataF<'a, usize>,
+        src_index: &ColumnDataIndex<'a>,
     ) -> Result<Vec<String>, ErrorDesc>;
 
     fn to_const<T: 'static + Send + Sync>(&self, dict: &Dictionary) -> Result<T, ErrorDesc>;
     fn group_in(
         &self,
         dict: &Dictionary,
-        src_index: &ColumnDataF<usize>,
+        src_index: &ColumnDataIndex,
         dst: &mut Vec<usize>,
         hashmap_buffer: &mut HashMapBuffer,
         hashmap_binary: &mut HashMap<(usize, NullableValue<&[u8]>), usize, ahash::RandomState>,
@@ -140,7 +140,7 @@ impl<'a> ColumnOperations<'a> for ColumnWrapper<'a> {
     fn hash_in(
         &self,
         dict: &Dictionary,
-        src_index: &ColumnDataF<'a, usize>,
+        src_index: &ColumnDataIndex<'a>,
         hash_column: &mut Vec<u64>,
     ) -> Result<(), ErrorDesc> {
         let signature = Signature::new("" as &str, vec![self.column().item_type_id()]);
@@ -157,7 +157,7 @@ impl<'a> ColumnOperations<'a> for ColumnWrapper<'a> {
     fn group_in(
         &self,
         dict: &Dictionary,
-        src_index: &ColumnDataF<usize>,
+        src_index: &ColumnDataIndex,
         dst: &mut Vec<usize>,
         hashmap_buffer: &mut HashMapBuffer,
         hashmap_binary: &mut HashMap<(usize, NullableValue<&[u8]>), usize, ahash::RandomState>,
@@ -205,7 +205,7 @@ impl<'a> ColumnOperations<'a> for ColumnWrapper<'a> {
         &self,
         dict: &Dictionary,
         dst: &mut ColumnWrapper<'a>,
-        src_index: &ColumnDataF<'a, usize>,
+        src_index: &ColumnDataIndex<'a>,
     ) -> Result<(), ErrorDesc> {
         let signature = Signature::new("" as &str, vec![self.column().item_type_id()]);
         let internaloperator = dict.columninternal.get(&signature);
@@ -222,7 +222,7 @@ impl<'a> ColumnOperations<'a> for ColumnWrapper<'a> {
         &mut self,
         dict: &Dictionary,
         op: &str,
-        c1_index: &ColumnDataF<'a, usize>,
+        c1_index: &ColumnDataIndex<'a>,
         input: &[InputTypes],
     ) -> Result<(), ErrorDesc> {
         let is_assign_op = dict
@@ -254,7 +254,7 @@ impl<'a> ColumnOperations<'a> for ColumnWrapper<'a> {
     fn as_string(
         &self,
         dict: &Dictionary,
-        src_index: &ColumnDataF<'a, usize>,
+        src_index: &ColumnDataIndex<'a>,
     ) -> Result<Vec<String>, ErrorDesc> {
         let signature = Signature::new("" as &str, vec![self.column().item_type_id()]);
         let internaloperator = dict.columninternal.get(&signature);
@@ -282,7 +282,7 @@ impl<'a> ColumnOperations<'a> for ColumnWrapper<'a> {
 
         match internaloperator {
             Some(iop) => {
-                iop.copy_to(&self, &mut output_as_col, &ColumnDataF::None)?;
+                iop.copy_to(&self, &mut output_as_col, &ColumnDataIndex::None)?;
                 Ok(unsafe { output.pop().unwrap().assume_init() })
             }
             None => Err(format!(

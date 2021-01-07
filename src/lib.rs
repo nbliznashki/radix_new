@@ -192,8 +192,8 @@ mod tests {
         c1.op(
             &dict,
             "+=",
-            &ColumnDataF::None,
-            &[InputTypes::Ref(&c2, &ColumnDataF::None)],
+            &ColumnDataIndex::None,
+            &[InputTypes::Ref(&c2, &ColumnDataIndex::None)],
         )
         .unwrap();
 
@@ -236,11 +236,11 @@ mod tests {
             .unwrap();
 
         let c3_index: PartitionedIndex = vec![
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0]),
         ];
 
         t.push_index(c3_index, &[0]).unwrap();
@@ -304,11 +304,11 @@ mod tests {
             .unwrap();
 
         let c2_index: PartitionedIndex = vec![
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0]),
         ];
 
         t.push_index(c2_index, &[1]).unwrap();
@@ -327,22 +327,22 @@ mod tests {
         let keep_all = vec![true, true, true, true, true];
         let keep_some = vec![false, true, false, true, false];
 
-        let mut index_ref = ColumnDataF::new_from_slice_mut(index.as_mut_slice());
+        let mut index_ref = ColumnDataIndex::new_from_slice_mut(index.as_mut_slice());
         filter(&mut index_ref, &keep_all, &ColumnDataF::None, &None).unwrap();
         assert_eq!(index_ref.downcast_vec().unwrap(), &mut vec![1, 2, 3, 4, 5]);
 
-        let mut index_ref = ColumnDataF::new_from_slice_mut(index.as_mut_slice());
+        let mut index_ref = ColumnDataIndex::new_from_slice_mut(index.as_mut_slice());
         filter(&mut index_ref, &keep_some, &ColumnDataF::None, &None).unwrap();
         assert_eq!(index_ref.downcast_vec().unwrap(), &mut vec![2, 4]);
 
-        let mut index_owned = ColumnDataF::new(index.clone());
+        let mut index_owned = ColumnDataIndex::new(index.clone());
         filter(&mut index_owned, &keep_all, &ColumnDataF::None, &None).unwrap();
         assert_eq!(
             index_owned.downcast_vec().unwrap(),
             &mut vec![1, 2, 3, 4, 5]
         );
 
-        let mut index_owned = ColumnDataF::new(index.clone());
+        let mut index_owned = ColumnDataIndex::new(index.clone());
         filter(&mut index_owned, &keep_some, &ColumnDataF::None, &None).unwrap();
         assert_eq!(index_owned.downcast_vec().unwrap(), &mut vec![2, 4]);
     }
@@ -387,18 +387,19 @@ mod tests {
         t.push_with_bitmap(&dict, &c2_names, &c2_bitmap).unwrap();
 
         let c2_index: PartitionedIndex = vec![
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0]),
         ];
 
         t.push_index(c2_index, &[1]).unwrap();
-
+        t.print(&dict).unwrap();
         let e = TableExpression::new("==", &[0, 1]);
 
         t.filter(&dict, &e).unwrap();
+        t.print(&dict).unwrap();
         let expected_result = vec!["1A", "3A", "5A", "7A"];
 
         let result = t.materialize_as_string(&dict, &1).unwrap();
@@ -427,24 +428,27 @@ mod tests {
             .unwrap();
 
         let c3_index: PartitionedIndex = vec![
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0]),
         ];
 
         t.push_index(c3_index, &[0]).unwrap();
+        t.print(&dict).unwrap();
 
         let mut e = TableExpression::new("<", &[500, 1000]);
         e.expand_node(500, "+", &[0, 500]).unwrap();
         e.expand_node(500, "+", &[1, 2]).unwrap();
 
+        //(col_0+(col_1+col_2))<16
+
         let const_val = &ColumnWrapper::new_const(&dict, 16u32);
         e.expand_node_as_const(1000, &mut Some(const_val)).unwrap();
 
         t.add_expression_as_new_column(&dict, &e);
-        //t.print(&dict).unwrap();
+        t.print(&dict).unwrap();
 
         let expected_result = vec![
             "true", "(null)", "true", "true", "(null)", "false", "false", "false", "(null)",
@@ -493,11 +497,11 @@ mod tests {
         t.push_with_bitmap(&dict, &c2_names, &c2_bitmap).unwrap();
 
         let c2_index: PartitionedIndex = vec![
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0]),
         ];
 
         t.push_index(c2_index, &[1]).unwrap();
@@ -551,14 +555,15 @@ mod tests {
         t.push_with_bitmap(&dict, &c2_names, &c2_bitmap).unwrap();
 
         let c2_index: PartitionedIndex = vec![
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0, 0]),
-            ColumnDataF::new(vec![0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0, 0]),
+            ColumnDataIndex::new(vec![0]),
         ];
 
         t.push_index(c2_index, &[1]).unwrap();
+        t.print(&dict).unwrap();
         let h = t.build_hash(&dict, &[1]);
         let h1: Vec<_> = h.iter().flatten().map(|i| *i & 3).collect();
         t.push(&dict, &h1).unwrap();
@@ -573,7 +578,7 @@ mod tests {
             let c_part_1: Vec<_> = res
                 .iter()
                 .map(|c| {
-                    let c_data = c.as_string(&dict, &ColumnDataF::None).unwrap();
+                    let c_data = c.as_string(&dict, &ColumnDataIndex::None).unwrap();
                     let c_bitmap = c.bitmap().downcast_ref().unwrap().to_vec();
                     (c_data, c_bitmap)
                 })
@@ -590,7 +595,7 @@ mod tests {
             let c_part_2: Vec<_> = res
                 .iter()
                 .map(|c| {
-                    let c_data = c.as_string(&dict, &ColumnDataF::None).unwrap();
+                    let c_data = c.as_string(&dict, &ColumnDataIndex::None).unwrap();
                     let c_bitmap = c.bitmap().downcast_ref().unwrap().to_vec();
                     (c_data, c_bitmap)
                 })
@@ -671,8 +676,8 @@ mod tests {
         t.push_with_bitmap(&dict, &c2_names, &c2_bitmap).unwrap();
 
         let c2_index: PartitionedIndex = vec![
-            ColumnDataF::new(vec![0, 0, 2, 2]),
-            ColumnDataF::new(vec![0, 0, 2, 2, 4]),
+            ColumnDataIndex::new(vec![0, 0, 2, 2]),
+            ColumnDataIndex::new(vec![0, 0, 2, 2, 4]),
         ];
 
         t.push_index(c2_index, &[1]).unwrap();
@@ -720,8 +725,8 @@ mod tests {
         t.push_with_bitmap(&dict, &c2_names, &c2_bitmap).unwrap();
 
         let c2_index: PartitionedIndex = vec![
-            ColumnDataF::new(vec![0, 0, 2, 2]),
-            ColumnDataF::new(vec![0, 0, 2, 2, 4]),
+            ColumnDataIndex::new(vec![0, 0, 2, 2]),
+            ColumnDataIndex::new(vec![0, 0, 2, 2, 4]),
         ];
 
         t.push_index(c2_index, &[1]).unwrap();
@@ -747,7 +752,7 @@ mod tests {
 
         t.print(&dict).unwrap();
 
-        let mut e = TableExpression::new("sum", &[1]);
+        let mut e = TableExpression::new("SUM", &[1]);
         e.partition_by.push(ExpressionInput::Column(0));
         //e.expand_node(500, "+", &[0, 500]).unwrap();
         //e.expand_node(500, "+", &[1, 2]).unwrap();
@@ -757,5 +762,68 @@ mod tests {
 
         t.add_expression_as_new_column(&dict, &e);
         t.print(&dict).unwrap();
+        println!("{:?}", t.indexes);
+    }
+
+    fn trait_iter() {
+        trait ForEach<T, F> {
+            fn apply(&mut self, f: F)
+            where
+                T: Sized,
+                F: FnMut(&mut T);
+        }
+
+        pub struct A {
+            pub data: Vec<u64>,
+        }
+
+        pub struct B {
+            pub data: Vec<u64>,
+            pub index: Vec<usize>,
+        }
+
+        impl<F> ForEach<u64, F> for A {
+            fn apply(&mut self, f: F)
+            where
+                F: FnMut(&mut u64),
+            {
+                #[inline]
+                fn call<T>(mut f: impl FnMut(T)) -> impl FnMut((), T) {
+                    move |(), item| f(item)
+                }
+
+                self.data.iter_mut().fold((), call(f));
+            }
+        }
+
+        impl<F> ForEach<u64, F> for B {
+            fn apply(&mut self, mut f: F)
+            where
+                F: FnMut(&mut u64),
+            {
+                #[inline]
+                fn call<T>(mut f: impl FnMut(T)) -> impl FnMut((), T) {
+                    move |(), item| f(item)
+                }
+                let (index, data) = (&self.index, &mut self.data);
+                index.iter().for_each(|i| f(&mut data[*i]))
+            }
+        }
+
+        let mut a = A {
+            data: vec![1, 2, 3, 4],
+        };
+
+        a.apply(|x| *x += 1);
+
+        let mut b = B {
+            data: vec![1, 2, 3, 4],
+            index: vec![0, 0, 1],
+        };
+
+        b.apply(|x| *x += a.data[*x as usize]);
+
+        println!("{:?}", a.data);
+        println!("{:?}", b.data);
     }
 }

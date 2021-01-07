@@ -27,7 +27,7 @@ macro_rules! operation_load {
 macro_rules! operation_impl {
     ($(($tl:ty, $tr:ty))+) => ($(
         paste!   {
-            fn [<addassign_$tl:lower _ $tr:lower>](c1: &mut ColumnWrapper, c1_index: &ColumnDataF<usize>, input:&[InputTypes])->Result<(),ErrorDesc>
+            fn [<addassign_$tl:lower _ $tr:lower>](c1: &mut ColumnWrapper, c1_index: &ColumnDataIndex, input:&[InputTypes])->Result<(),ErrorDesc>
             {
                 type T1=$tl;
                 type T2=$tr;
@@ -40,7 +40,8 @@ macro_rules! operation_impl {
                 let bitmap_update_required=c2.bitmap().is_some();
 
                 update_2_sized_sized_unroll::<T1, T2, _>(c1, c1_index, &input, &bitmap_update_required, |c1_data,c1_bool,c2_data,c2_bool| {
-                    *c1_data=if *c1_bool {*c1_data+T1::from(*c2_data)} else {T1::default()}; *c1_bool &= c2_bool;
+                    *c1_data=if *c1_bool {*c1_data+T1::from(*c2_data)} else {T1::default()};
+                    *c1_bool &= c2_bool;
                 })
             }
         }

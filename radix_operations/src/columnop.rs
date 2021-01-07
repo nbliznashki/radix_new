@@ -20,7 +20,7 @@ fn copy_to_buckets_part<T: Copy>(
     hash: &Vec<u64>,
     buckets_mask: u64,
     src: &[T],
-    src_index: &ColumnDataF<usize>,
+    src_index: &ColumnDataIndex,
     offsets: &mut VecDeque<usize>,
     dst: &mut [&mut [T]],
 ) -> Result<usize, ErrorDesc> {
@@ -47,7 +47,7 @@ fn copy_to_buckets_part_uninit<T: Copy>(
     hash: &Vec<u64>,
     buckets_mask: u64,
     src: &[T],
-    src_index: &ColumnDataF<usize>,
+    src_index: &ColumnDataIndex,
     offsets: &mut VecDeque<usize>,
     dst: &mut [&mut [MaybeUninit<T>]],
 ) -> Result<usize, ErrorDesc> {
@@ -78,7 +78,7 @@ fn copy_to_buckets_binary_part(
     src_start_pos: &[usize],
     src_len: &[usize],
     src_offset: &usize,
-    src_index: &ColumnDataF<usize>,
+    src_index: &ColumnDataIndex,
     offsets: &mut VecDeque<usize>,
     dst: &mut [(&mut [u8], &[usize], &[usize], usize)],
 ) -> Result<usize, ErrorDesc> {
@@ -146,12 +146,12 @@ pub trait ColumnInternalOp {
         &self,
         src: &ColumnWrapper<'a>,
         dst: &mut ColumnWrapper<'a>,
-        src_index: &ColumnDataF<'a, usize>,
+        src_index: &ColumnDataIndex<'a>,
     ) -> Result<(), ErrorDesc>;
     fn as_string<'a>(
         &self,
         src: &ColumnWrapper<'a>,
-        src_index: &ColumnDataF<'a, usize>,
+        src_index: &ColumnDataIndex<'a>,
     ) -> Result<Vec<String>, ErrorDesc>;
     fn new_owned_with_capacity(
         &self,
@@ -170,7 +170,7 @@ pub trait ColumnInternalOp {
     fn hash_in(
         &self,
         src: &ColumnWrapper,
-        src_index: &ColumnDataF<usize>,
+        src_index: &ColumnDataIndex,
         dst: &mut Vec<u64>,
     ) -> Result<(), ErrorDesc>;
 
@@ -179,7 +179,7 @@ pub trait ColumnInternalOp {
         hash: &[Vec<u64>],
         buckets_mask: u64,
         src_columns: &[Vec<ColumnWrapper>],
-        src_indexes: &[Vec<ColumnDataF<usize>>],
+        src_indexes: &[Vec<ColumnDataIndex>],
         col_id: usize,
         index_id: &Option<&usize>,
         offsets: &VecDeque<usize>,
@@ -192,7 +192,7 @@ pub trait ColumnInternalOp {
         hash: &[Vec<u64>],
         buckets_mask: u64,
         src_columns: &[Vec<ColumnWrapper>],
-        src_indexes: &[Vec<ColumnDataF<usize>>],
+        src_indexes: &[Vec<ColumnDataIndex>],
         col_id: usize,
         index_id: &Option<&usize>,
         offsets: &VecDeque<usize>,
@@ -201,7 +201,7 @@ pub trait ColumnInternalOp {
     fn group_in(
         &self,
         src: &ColumnWrapper,
-        src_index: &ColumnDataF<usize>,
+        src_index: &ColumnDataIndex,
         dst: &mut Vec<usize>,
         hashmap_buffer: &mut HashMapBuffer,
         hashmap_binary: &mut HashMap<(usize, NullableValue<&[u8]>), usize, ahash::RandomState>,
@@ -300,7 +300,7 @@ macro_rules! sized_types_impl {
                     &self,
                     src: &ColumnWrapper<'a>,
                     dst: &mut ColumnWrapper<'a>,
-                    src_index: &ColumnDataF<'a, usize>,
+                    src_index: &ColumnDataIndex<'a>,
                 ) -> Result<(), ErrorDesc>
                 {
                     type T=$tr;
@@ -319,7 +319,7 @@ macro_rules! sized_types_impl {
                 fn as_string<'a>(
                     &self,
                     src: &ColumnWrapper<'a>,
-                    src_index: &ColumnDataF<'a, usize>,
+                    src_index: &ColumnDataIndex<'a>,
                 ) -> Result<Vec<String>, ErrorDesc>
                 {
                     type T=$tr;
@@ -362,7 +362,7 @@ macro_rules! sized_types_impl {
                     Ok(c)
                 }
 
-                fn hash_in(&self, src: &ColumnWrapper, src_index: &ColumnDataF<usize>, dst: &mut Vec<u64>)-> Result<(), ErrorDesc>{
+                fn hash_in(&self, src: &ColumnWrapper, src_index: &ColumnDataIndex, dst: &mut Vec<u64>)-> Result<(), ErrorDesc>{
                     type T=$tr;
                     let src_data=src.column().downcast_ref::<T>()?;
                     let src_bitmap=src.bitmap();
@@ -484,7 +484,7 @@ macro_rules! sized_types_impl {
                     hash: &[Vec<u64>],
                     buckets_mask: u64,
                     src_columns: &[Vec<ColumnWrapper>],
-                    src_indexes: &[Vec<ColumnDataF<usize>>],
+                    src_indexes: &[Vec<ColumnDataIndex>],
                     col_id: usize,
                     index_id: &Option<&usize>,
                     offsets: &VecDeque<usize>,
@@ -498,7 +498,7 @@ macro_rules! sized_types_impl {
                     let mut offsets_tmp=offsets.clone();
                     let mut items_written=0;
 
-                    let index_empty=ColumnDataF::<usize>::None;
+                    let index_empty=ColumnDataIndex::None;
 
                     src_columns.iter().zip(src_indexes.iter()).zip(hash.iter()).for_each(|((src, src_index), hash)|{
                         let src=src[col_id].column().downcast_ref::<T>().unwrap();
@@ -533,7 +533,7 @@ macro_rules! sized_types_impl {
                     _hash: &[Vec<u64>],
                     _buckets_mask: u64,
                     _src_columns: &[Vec<ColumnWrapper>],
-                    _src_indexes: &[Vec<ColumnDataF<usize>>],
+                    _src_indexes: &[Vec<ColumnDataIndex>],
                     _col_id: usize,
                     _index_id: &Option<&usize>,
                     _offsets: &VecDeque<usize>,
@@ -543,7 +543,7 @@ macro_rules! sized_types_impl {
                 fn group_in(
                     &self,
                     src: &ColumnWrapper,
-                    src_index: &ColumnDataF<usize>,
+                    src_index: &ColumnDataIndex,
                     dst: &mut Vec<usize>,
                     hashmap_buffer: &mut HashMapBuffer,
                     _hashmap_binary: &mut HashMap<(usize, NullableValue<&[u8]>), usize, ahash::RandomState>,
@@ -719,7 +719,7 @@ macro_rules! binary_types_impl {
                     &self,
                     src: &ColumnWrapper<'a>,
                     dst: &mut ColumnWrapper<'a>,
-                    src_index: &ColumnDataF<'a, usize>,
+                    src_index: &ColumnDataIndex<'a>,
                 ) -> Result<(), ErrorDesc>
                 {
                     type T=$tr;
@@ -738,7 +738,7 @@ macro_rules! binary_types_impl {
                 fn as_string<'a>(
                     &self,
                     src: &ColumnWrapper<'a>,
-                    src_index: &ColumnDataF<'a, usize>,
+                    src_index: &ColumnDataIndex<'a>,
                 ) -> Result<Vec<String>, ErrorDesc>
                 {
                     type T=$tr;
@@ -789,7 +789,7 @@ macro_rules! binary_types_impl {
                 }
 
 
-                fn hash_in(&self, src: &ColumnWrapper, src_index: &ColumnDataF<usize>, dst: &mut Vec<u64>)-> Result<(), ErrorDesc>{
+                fn hash_in(&self, src: &ColumnWrapper, src_index: &ColumnDataIndex, dst: &mut Vec<u64>)-> Result<(), ErrorDesc>{
                     type T=$tr;
                     let (datau8, start_pos, len, offset) =src.column().downcast_binary_ref::<T>()?;
                     let src_bitmap=src.bitmap();
@@ -938,7 +938,7 @@ macro_rules! binary_types_impl {
                     hash: &[Vec<u64>],
                     buckets_mask: u64,
                     src_columns: &[Vec<ColumnWrapper>],
-                    src_indexes: &[Vec<ColumnDataF<usize>>],
+                    src_indexes: &[Vec<ColumnDataIndex>],
                     col_id: usize,
                     index_id: &Option<&usize>,
                     offsets: &VecDeque<usize>,
@@ -953,7 +953,7 @@ macro_rules! binary_types_impl {
                     let mut items_written=0;
 
 
-                    let index_empty=ColumnDataF::<usize>::None;
+                    let index_empty=ColumnDataIndex::None;
 
                     src_columns.iter().zip(src_indexes.iter()).zip(hash.iter()).for_each(|((src, src_index), hash)|{
                         let src=src[col_id].column().downcast_binary_ref::<T>().unwrap().2;
@@ -997,7 +997,7 @@ macro_rules! binary_types_impl {
                     hash: &[Vec<u64>],
                     buckets_mask: u64,
                     src_columns: &[Vec<ColumnWrapper>],
-                    src_indexes: &[Vec<ColumnDataF<usize>>],
+                    src_indexes: &[Vec<ColumnDataIndex>],
                     col_id: usize,
                     index_id: &Option<&usize>,
                     offsets: &VecDeque<usize>,
@@ -1010,7 +1010,7 @@ macro_rules! binary_types_impl {
                     let mut offsets_tmp=offsets.clone();
                     let mut bytes_written=0;
 
-                    let index_empty=ColumnDataF::<usize>::None;
+                    let index_empty=ColumnDataIndex::None;
 
                     src_columns.iter().zip(src_indexes.iter()).zip(hash.iter()).for_each(|((src, src_index), hash)|{
                         let (src_datau8, src_start_pos,src_len,src_offset)=src[col_id].column().downcast_binary_ref::<T>().unwrap();
@@ -1027,7 +1027,7 @@ macro_rules! binary_types_impl {
                 fn group_in(
                     &self,
                     src: &ColumnWrapper,
-                    src_index: &ColumnDataF<usize>,
+                    src_index: &ColumnDataIndex,
                     dst: &mut Vec<usize>,
                     _hashmap_buffer: &mut HashMapBuffer,
                     hashmap_binary: &mut HashMap<(usize, NullableValue<&[u8]>), usize, ahash::RandomState>,
@@ -1249,7 +1249,7 @@ fn copy_to_buckets_binary_part(
     src_start_pos: &[usize],
     src_len: &[usize],
     src_offset: &usize,
-    src_index: &ColumnDataF<usize>,
+    src_index: &ColumnDataIndex,
     offsets: &mut VecDeque<usize>,
     dst: &mut [(&mut [u8], &[usize], &[usize], usize)],
 )

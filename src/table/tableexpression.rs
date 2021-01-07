@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use radix_column::{ColumnDataF, ColumnWrapper, ErrorDesc, HashMapBuffer, NullableValue};
+use radix_column::{
+    ColumnDataF, ColumnDataIndex, ColumnWrapper, ErrorDesc, HashMapBuffer, NullableValue,
+};
 use radix_operations::{ColumnOperations, Dictionary, InputTypes, Signature};
 
 use crate::column_buffer::ColumnBuffer;
@@ -151,11 +153,11 @@ impl<'a> TableExpression<'a> {
         hashmap_buffer: &mut HashMapBuffer,
         hashmap_binary: &mut HashMap<(usize, NullableValue<&[u8]>), usize, ahash::RandomState>,
         columns: &[ColumnWrapper],
-        indexes: &[ColumnDataF<usize>],
+        indexes: &[ColumnDataIndex],
         columnindexmap: &HashMap<usize, usize>,
     ) -> Result<InputTypes, ErrorDesc> {
         assert!(!dict.op_is_assign.get(&self.op).unwrap());
-        let index_empty: ColumnDataF<usize> = ColumnDataF::None;
+        let index_empty: ColumnDataIndex = ColumnDataIndex::None;
 
         let mut inp: Vec<InputTypes> = self
             .input
@@ -257,12 +259,12 @@ impl<'a> TableExpression<'a> {
 
             inp.push(InputTypes::Owned(
                 ColumnWrapper::new_from_vec(dict, v),
-                ColumnDataF::None,
+                ColumnDataIndex::None,
             ));
 
             inp.push(InputTypes::Owned(
                 ColumnWrapper::new_const(dict, number_of_groups),
-                ColumnDataF::None,
+                ColumnDataIndex::None,
             ));
         }
 
@@ -270,7 +272,7 @@ impl<'a> TableExpression<'a> {
         let op = dict.op.get(&signature).unwrap();
 
         let mut output = buffer.pop(dict, op.output_type_id)?;
-        let mut output_index = ColumnDataF::None;
+        let mut output_index = ColumnDataIndex::None;
 
         (op.f)(&mut output, &index_empty, &inp)?;
         if !part_by.is_empty() {
@@ -282,7 +284,7 @@ impl<'a> TableExpression<'a> {
             };
             let (v, _) = v.get_inner();
             let v = v.downcast_owned::<usize>()?;
-            output_index = ColumnDataF::new(v);
+            output_index = ColumnDataIndex::new(v);
         }
         inp.into_iter().for_each(|inp| {
             if let InputTypes::Owned(c, _) = inp {

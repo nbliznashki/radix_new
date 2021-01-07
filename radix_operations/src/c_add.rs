@@ -28,7 +28,7 @@ macro_rules! operation_impl_copy {
     ($(($tl:ty, $tr:ty))+) => ($(
         paste!
         {
-            fn [<add_$tl:lower _ $tr:lower>](c1: &mut ColumnWrapper, _c1_index: &ColumnDataF<usize>, input: &[InputTypes])->Result<(),ErrorDesc>
+            fn [<add_$tl:lower _ $tr:lower>](c1: &mut ColumnWrapper, _c1_index: &ColumnDataIndex, input: &[InputTypes])->Result<(),ErrorDesc>
             {
 
                 type T1=$tl;

@@ -3,12 +3,12 @@ use radix_column::*;
 use std::any::TypeId;
 
 pub enum InputTypes<'a> {
-    Ref(&'a ColumnWrapper<'a>, &'a ColumnDataF<'a, usize>),
-    Owned(ColumnWrapper<'static>, ColumnDataF<'static, usize>),
+    Ref(&'a ColumnWrapper<'a>, &'a ColumnDataIndex<'a>),
+    Owned(ColumnWrapper<'static>, ColumnDataIndex<'static>),
 }
 #[derive(Clone)]
 pub struct Operation {
-    pub f: fn(&mut ColumnWrapper, &ColumnDataF<usize>, &[InputTypes]) -> Result<(), ErrorDesc>,
+    pub f: fn(&mut ColumnWrapper, &ColumnDataIndex, &[InputTypes]) -> Result<(), ErrorDesc>,
     pub output_type_id: TypeId,
     pub is_assign_op: bool,
     pub associated_assign_op: Option<String>,
@@ -18,7 +18,7 @@ pub struct Operation {
 pub trait ColumnOp {
     fn op(
         output: &mut ColumnWrapper,
-        output_index: &ColumnDataF<usize>,
+        output_index: &ColumnDataIndex,
         input: &Vec<InputTypes>,
     ) -> Result<(), ErrorDesc>;
 }

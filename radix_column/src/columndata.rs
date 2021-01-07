@@ -1,4 +1,4 @@
-use std::any::TypeId;
+use std::{any::TypeId, ops::AddAssign};
 
 pub type ErrorDesc = Box<dyn std::error::Error>;
 
@@ -470,6 +470,86 @@ impl<'a, T> ColumnDataF<'a, T> {
             ColumnDataF::Slice(_) => false,
             ColumnDataF::SliceMut(_) => false,
             ColumnDataF::None => false,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ColumnDataIndex<'a> {
+    //None,
+    Owned(Vec<usize>),
+    Slice(&'a [usize]),
+    SliceMut(&'a mut [usize]),
+    None,
+}
+
+impl<'a> ColumnDataIndex<'a> {
+    pub fn is_some(&self) -> bool {
+        self.len().is_some()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.len().is_some()
+    }
+
+    pub fn len(&self) -> Option<usize> {
+        match &self {
+            //ColumnDataF::None => None,
+            ColumnDataIndex::Owned(v) => Some(v.len()),
+            ColumnDataIndex::Slice(s) => Some(s.len()),
+            ColumnDataIndex::SliceMut(s) => Some(s.len()),
+            ColumnDataIndex::None => None,
+        }
+    }
+
+    pub fn downcast_ref<'b>(&'b self) -> Result<&'b [usize], ErrorDesc> {
+        match &self {
+            ColumnDataIndex::Owned(v) => Ok(v.as_slice()),
+            ColumnDataIndex::Slice(s) => Ok(s),
+            ColumnDataIndex::SliceMut(s) => Ok(s),
+            ColumnDataIndex::None => Err("ColumnDataF is None and cannot be downcasted as a ref")?,
+        }
+    }
+
+    pub fn downcast_mut<'b>(&'b mut self) -> Result<&'b mut [usize], ErrorDesc> {
+        match self {
+            ColumnDataIndex::Owned(v) => Ok(v.as_mut_slice()),
+            ColumnDataIndex::Slice(_) => Err("")?,
+            ColumnDataIndex::SliceMut(s) => Ok(*s),
+            ColumnDataIndex::None => {
+                Err("ColumnDataF is None and cannot be downcasted as a mut ref")?
+            }
+        }
+    }
+
+    pub fn downcast_vec<'b>(&'b mut self) -> Result<&'b mut Vec<usize>, ErrorDesc>
+    where
+        'a: 'b,
+    {
+        match self {
+            ColumnDataIndex::Owned(v) => Ok(v),
+            ColumnDataIndex::Slice(_) => Err("")?,
+            ColumnDataIndex::SliceMut(_) => Err("")?,
+            ColumnDataIndex::None => {
+                Err("ColumnDataF is None and cannot be downcasted as a mut Vec")?
+            }
+        }
+    }
+    pub fn new(data: Vec<usize>) -> Self {
+        ColumnDataIndex::Owned(data)
+    }
+    pub fn new_from_slice(data: &'a [usize]) -> Self {
+        ColumnDataIndex::Slice(data)
+    }
+    pub fn new_from_slice_mut(data: &'a mut [usize]) -> Self {
+        ColumnDataIndex::SliceMut(data)
+    }
+    pub fn is_owned(&self) -> bool {
+        match self {
+            ColumnDataIndex::Owned(_) => true,
+            ColumnDataIndex::Slice(_) => false,
+            ColumnDataIndex::SliceMut(_) => false,
+            ColumnDataIndex::None => false,
         }
     }
 }

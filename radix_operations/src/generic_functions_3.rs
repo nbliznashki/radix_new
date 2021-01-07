@@ -39,7 +39,7 @@ where
 
 fn f_1_sized_sized_sized<'a, 'i, T1, T2, T3, U2, U3, FBool, F1, F2>(
     c1: &'a mut ColumnWrapper,
-    c1_index: &ColumnDataF<usize>,
+    c1_index: &ColumnDataIndex,
     bitmap_update_required: &bool,
     c2: U2,
     c3: U3,
@@ -231,10 +231,10 @@ where
 
 fn f_2_sized_sized_sized<'a, 'i, T1, T2, T3, U3, FBool, F1, F2>(
     c1: &'a mut ColumnWrapper,
-    c1_index: &ColumnDataF<usize>,
+    c1_index: &ColumnDataIndex,
     bitmap_update_required: &bool,
     c: &'a ColumnWrapper,
-    c_index: &'a ColumnDataF<usize>,
+    c_index: &'a ColumnDataIndex,
     c3: U3,
     f: FType<'a, T1, T2, T3, FBool, F1, F2>,
     len: &usize,
@@ -334,12 +334,12 @@ where
 
 fn f_3_sized_sized_sized<'a, 'i, T1, T2, T3, FBool, F1, F2>(
     c1: &'a mut ColumnWrapper,
-    c1_index: &ColumnDataF<usize>,
+    c1_index: &ColumnDataIndex,
     bitmap_update_required: &bool,
     c2: &'a ColumnWrapper,
-    c2_index: &'a ColumnDataF<usize>,
+    c2_index: &'a ColumnDataIndex,
     c: &'a ColumnWrapper,
-    c_index: &'a ColumnDataF<usize>,
+    c_index: &'a ColumnDataIndex,
     f: FType<'a, T1, T2, T3, FBool, F1, F2>,
     len: &usize,
 ) -> Result<(), ErrorDesc>
@@ -517,7 +517,7 @@ where
 
     f_3_sized_sized_sized(
         c1,
-        &ColumnDataF::None,
+        &ColumnDataIndex::None,
         bitmap_update_required,
         c2,
         c2_index,
@@ -531,7 +531,7 @@ where
 
 pub fn update_3_sized_sized_sized_unroll<'a, T1, T2, T3, F>(
     c1: &'a mut ColumnWrapper,
-    c1_index: &ColumnDataF<usize>,
+    c1_index: &ColumnDataIndex,
     input: &'a [InputTypes<'a>],
     bitmap_update_required: &bool,
     f: F,
@@ -603,7 +603,7 @@ where
 
 fn f_1_sized_binary_binary<'a, 'i, T1, T2, T3, U2, U3, FBool, F1, F2>(
     c1: &'a mut ColumnWrapper,
-    c1_index: &ColumnDataF<usize>,
+    c1_index: &ColumnDataIndex,
     bitmap_update_required: &bool,
     c2: U2,
     c3: U3,
@@ -795,10 +795,10 @@ where
 
 fn f_2_sized_binary_binary<'a, 'i, T1, T2, T3, U3, FBool, F1, F2>(
     c1: &'a mut ColumnWrapper,
-    c1_index: &ColumnDataF<usize>,
+    c1_index: &ColumnDataIndex,
     bitmap_update_required: &bool,
     c: &'a ColumnWrapper,
-    c_index: &'a ColumnDataF<usize>,
+    c_index: &'a ColumnDataIndex,
     c3: U3,
     f: FType<'a, T1, [u8], [u8], FBool, F1, F2>,
     len: &usize,
@@ -926,12 +926,12 @@ where
 
 fn f_3_sized_binary_binary<'a, 'i, T1, T2, T3, FBool, F1, F2>(
     c1: &'a mut ColumnWrapper,
-    c1_index: &ColumnDataF<usize>,
+    c1_index: &ColumnDataIndex,
     bitmap_update_required: &bool,
     c2: &'a ColumnWrapper,
-    c2_index: &'a ColumnDataF<usize>,
+    c2_index: &'a ColumnDataIndex,
     c: &'a ColumnWrapper,
-    c_index: &'a ColumnDataF<usize>,
+    c_index: &'a ColumnDataIndex,
     f: FType<'a, T1, [u8], [u8], FBool, F1, F2>,
     len: &usize,
 ) -> Result<(), ErrorDesc>
@@ -1126,7 +1126,7 @@ where
 
     f_3_sized_binary_binary::<T1, T2, T3, _, _, _>(
         c1,
-        &ColumnDataF::None,
+        &ColumnDataIndex::None,
         bitmap_update_required,
         c2,
         c2_index,
@@ -1141,7 +1141,7 @@ where
 
 pub fn update_3_sized_binary_binary_unroll<'a, T1, T2, T3, F>(
     c1: &'a mut ColumnWrapper,
-    c1_index: &ColumnDataF<usize>,
+    c1_index: &ColumnDataIndex,
     input: &'a [InputTypes<'a>],
     bitmap_update_required: &bool,
     f: F,

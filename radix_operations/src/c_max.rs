@@ -26,7 +26,7 @@ macro_rules! operation_load{
 macro_rules! operation_impl_sized {
     ($( $tr:ty)+) => ($(
         paste!   {
-            fn [<max_ $tr:lower>](c1: &mut ColumnWrapper, c1_index: &ColumnDataF<usize>, input:&[InputTypes])->Result<(),ErrorDesc>
+            fn [<max_ $tr:lower>](c1: &mut ColumnWrapper, c1_index: &ColumnDataIndex, input:&[InputTypes])->Result<(),ErrorDesc>
             {
                 type T=$tr;
 
@@ -48,10 +48,10 @@ macro_rules! operation_impl_sized {
                     InputTypes::Owned(c, i) => (c, i),
                 };
 
-                assert_eq!(c1_index, &ColumnDataF::None);
+                assert_eq!(c1_index, &ColumnDataIndex::None);
                 assert_eq!(c1.bitmap(), &ColumnDataF::None);
-                assert_eq!(c3_index, &ColumnDataF::None);
-                assert_eq!(c4_index, &ColumnDataF::None);
+                assert_eq!(c3_index, &ColumnDataIndex::None);
+                assert_eq!(c4_index, &ColumnDataIndex::None);
 
                 assert!(c4.column().is_const());
                 assert!(c1.column().is_owned());
@@ -149,7 +149,7 @@ macro_rules! operation_impl_sized {
 macro_rules! operation_impl_binary {
     ($( $tr:ty)+) => ($(
         paste!   {
-            fn [<max_ $tr:lower>](c1: &mut ColumnWrapper, c1_index: &ColumnDataF<usize>, input:&[InputTypes])->Result<(),ErrorDesc>
+            fn [<max_ $tr:lower>](c1: &mut ColumnWrapper, c1_index: &ColumnDataIndex, input:&[InputTypes])->Result<(),ErrorDesc>
             {
                 type T=$tr;
 
@@ -171,10 +171,10 @@ macro_rules! operation_impl_binary {
                     InputTypes::Owned(c, i) => (c, i),
                 };
 
-                assert_eq!(c1_index, &ColumnDataF::None);
+                assert_eq!(c1_index, &ColumnDataIndex::None);
                 assert_eq!(c1.bitmap(), &ColumnDataF::None);
-                assert_eq!(c3_index, &ColumnDataF::None);
-                assert_eq!(c4_index, &ColumnDataF::None);
+                assert_eq!(c3_index, &ColumnDataIndex::None);
+                assert_eq!(c4_index, &ColumnDataIndex::None);
 
                 assert!(c4.column().is_const());
                 assert!(c1.column().is_owned());

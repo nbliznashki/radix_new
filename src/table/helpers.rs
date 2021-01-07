@@ -100,7 +100,7 @@ where
 }
 
 pub(crate) fn filter(
-    index: &mut ColumnDataF<usize>,
+    index: &mut ColumnDataIndex,
     keep: &[bool],
     bitmap: &ColumnDataF<bool>,
     size_hint: &Option<usize>,
@@ -152,7 +152,7 @@ pub(crate) fn filter(
                         .map(|(i, _)| *i),
                 );
             }
-            *index = ColumnDataF::new(index_new);
+            *index = ColumnDataIndex::new(index_new);
         }
     } else {
         let mut index_new = if index.is_owned() && index.downcast_vec()?.capacity() > 0 {
@@ -171,7 +171,7 @@ pub(crate) fn filter(
         } else {
             index_new.extend(keep.iter().enumerate().filter(|(_, b)| **b).map(|(i, _)| i));
         }
-        *index = ColumnDataF::new(index_new);
+        *index = ColumnDataIndex::new(index_new);
     }
     Ok(index.len().unwrap())
 }

@@ -11,14 +11,14 @@ use radix_operations::*;
 type PartitionedColumn<'a> = Vec<&'a ColumnWrapper<'a>>;
 type PartitionedColumnMut<'a> = Vec<&'a mut ColumnWrapper<'a>>;
 
-pub type PartitionedIndex<'a> = Vec<ColumnDataF<'a, usize>>;
+pub type PartitionedIndex<'a> = Vec<ColumnDataIndex<'a>>;
 
 #[derive(Debug)]
 pub struct Table<'a> {
     partition_sizes: Vec<usize>,
     columns: Vec<Vec<ColumnWrapper<'a>>>,
     columns_nullable: Vec<bool>,
-    indexes: Vec<Vec<ColumnDataF<'a, usize>>>,
+    pub indexes: Vec<Vec<ColumnDataIndex<'a>>>,
     columnindexmap: HashMap<usize, usize>,
     //buffer_columns: BufferColumns<'a>,
 }
@@ -318,7 +318,7 @@ impl<'a> Table<'a> {
             p_column
                 .par_iter()
                 .zip_eq(output_vec.par_iter_mut())
-                .for_each(|(src, dst)| src.copy_to(dict, dst, &ColumnDataF::None).unwrap());
+                .for_each(|(src, dst)| src.copy_to(dict, dst, &ColumnDataIndex::None).unwrap());
         };
 
         //SAFETY: b is either empty or fully initilized at this point
@@ -345,7 +345,12 @@ impl<'a> Table<'a> {
 
         let p_column_str: Vec<_> = p_column
             .iter()
-            .map(|c| (c.as_string(dict, &ColumnDataF::None).unwrap(), c.bitmap()))
+            .map(|c| {
+                (
+                    c.as_string(dict, &ColumnDataIndex::None).unwrap(),
+                    c.bitmap(),
+                )
+            })
             .map(|(mut s, b)| {
                 let mut s = if !is_const {
                     ColumnWrapper::new_from_vec(dict, s)
@@ -430,7 +435,7 @@ impl<'a> Table<'a> {
                 let (s_left, s_right) = v_col.split_at_mut(*c1_id);
                 let (c1, s_right) = s_right.split_at_mut(1);
                 let c1 = &mut c1[0];
-                let index_empty: ColumnDataF<usize> = ColumnDataF::None;
+                let index_empty: ColumnDataIndex = ColumnDataIndex::None;
 
                 let c1_index = match columnindexmap.get(c1_id) {
                     Some(i) => &v_ind[*i],
@@ -521,7 +526,7 @@ impl<'a> Table<'a> {
                             }
                         });
                         if !columns_without_index.is_empty() {
-                            let mut ind: ColumnDataF<usize> = ColumnDataF::None;
+                            let mut ind: ColumnDataIndex = ColumnDataIndex::None;
                             filter(&mut ind, b, bitmap, &hint_size).unwrap();
                             indexes.push(ind);
                         }
@@ -602,7 +607,7 @@ impl<'a> Table<'a> {
             .par_iter()
             .map(|i| Vec::with_capacity(*i))
             .collect();
-        let index_empty = ColumnDataF::<usize>::None;
+        let index_empty = ColumnDataIndex::None;
 
         input_ids.iter().for_each(|col_id| {
             let signature = Signature::new(
@@ -641,7 +646,7 @@ impl<'a> Table<'a> {
             .par_iter()
             .map(|i| (vec![0usize; *i], *i))
             .collect();
-        let index_empty = ColumnDataF::<usize>::None;
+        let index_empty = ColumnDataIndex::None;
 
         input_ids.iter().for_each(|col_id| {
             let signature = Signature::new(
