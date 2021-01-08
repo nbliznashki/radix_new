@@ -479,7 +479,6 @@ pub enum ColumnDataIndex<'a> {
     //None,
     Owned(Vec<usize>),
     Slice(&'a [usize]),
-    SliceMut(&'a mut [usize]),
     None,
 }
 
@@ -497,7 +496,6 @@ impl<'a> ColumnDataIndex<'a> {
             //ColumnDataF::None => None,
             ColumnDataIndex::Owned(v) => Some(v.len()),
             ColumnDataIndex::Slice(s) => Some(s.len()),
-            ColumnDataIndex::SliceMut(s) => Some(s.len()),
             ColumnDataIndex::None => None,
         }
     }
@@ -506,7 +504,6 @@ impl<'a> ColumnDataIndex<'a> {
         match &self {
             ColumnDataIndex::Owned(v) => Ok(v.as_slice()),
             ColumnDataIndex::Slice(s) => Ok(s),
-            ColumnDataIndex::SliceMut(s) => Ok(s),
             ColumnDataIndex::None => Err("ColumnDataF is None and cannot be downcasted as a ref")?,
         }
     }
@@ -515,7 +512,6 @@ impl<'a> ColumnDataIndex<'a> {
         match self {
             ColumnDataIndex::Owned(v) => Ok(v.as_mut_slice()),
             ColumnDataIndex::Slice(_) => Err("")?,
-            ColumnDataIndex::SliceMut(s) => Ok(*s),
             ColumnDataIndex::None => {
                 Err("ColumnDataF is None and cannot be downcasted as a mut ref")?
             }
@@ -529,7 +525,6 @@ impl<'a> ColumnDataIndex<'a> {
         match self {
             ColumnDataIndex::Owned(v) => Ok(v),
             ColumnDataIndex::Slice(_) => Err("")?,
-            ColumnDataIndex::SliceMut(_) => Err("")?,
             ColumnDataIndex::None => {
                 Err("ColumnDataF is None and cannot be downcasted as a mut Vec")?
             }
@@ -541,14 +536,10 @@ impl<'a> ColumnDataIndex<'a> {
     pub fn new_from_slice(data: &'a [usize]) -> Self {
         ColumnDataIndex::Slice(data)
     }
-    pub fn new_from_slice_mut(data: &'a mut [usize]) -> Self {
-        ColumnDataIndex::SliceMut(data)
-    }
     pub fn is_owned(&self) -> bool {
         match self {
             ColumnDataIndex::Owned(_) => true,
             ColumnDataIndex::Slice(_) => false,
-            ColumnDataIndex::SliceMut(_) => false,
             ColumnDataIndex::None => false,
         }
     }

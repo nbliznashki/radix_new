@@ -327,11 +327,11 @@ mod tests {
         let keep_all = vec![true, true, true, true, true];
         let keep_some = vec![false, true, false, true, false];
 
-        let mut index_ref = ColumnDataIndex::new_from_slice_mut(index.as_mut_slice());
+        let mut index_ref = ColumnDataIndex::new(index.clone());
         filter(&mut index_ref, &keep_all, &ColumnDataF::None, &None).unwrap();
         assert_eq!(index_ref.downcast_vec().unwrap(), &mut vec![1, 2, 3, 4, 5]);
 
-        let mut index_ref = ColumnDataIndex::new_from_slice_mut(index.as_mut_slice());
+        let mut index_ref = ColumnDataIndex::new(index.clone());
         filter(&mut index_ref, &keep_some, &ColumnDataF::None, &None).unwrap();
         assert_eq!(index_ref.downcast_vec().unwrap(), &mut vec![2, 4]);
 
