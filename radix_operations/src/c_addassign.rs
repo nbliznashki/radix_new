@@ -39,7 +39,7 @@ macro_rules! operation_impl {
 
                 let bitmap_update_required=c2.bitmap().is_some();
 
-                update_2_sized_sized_unroll::<T1, T2, _>(c1, c1_index, &input, &bitmap_update_required, |c1_data,c1_bool,c2_data,c2_bool| {
+                update_2_sized_sized_unroll::<T1, T2, _>(c1, c1_index, &input, &bitmap_update_required, |c1_data,c1_bool,(c2_data,c2_bool)| {
                     *c1_data=if *c1_bool {*c1_data+T1::from(*c2_data)} else {T1::default()};
                     *c1_bool &= c2_bool;
                 })

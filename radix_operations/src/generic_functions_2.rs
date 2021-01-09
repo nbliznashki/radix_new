@@ -97,8 +97,8 @@ where
 
 ////////////////////////////////////////////////////////////////////////////
 
-pub fn insert_2_sized_sized_unroll<'a, T1, T2, FBool, F>(
-    c1: &'a mut ColumnWrapper<'a>,
+pub fn insert_2_sized_sized_unroll<'a, T1, T2, F>(
+    c1: &'a mut ColumnWrapper,
     input: &'a [InputTypes<'a>],
     bitmap_update_required: &bool,
     f: F,
@@ -162,7 +162,7 @@ where
 //////////////////    sized binary binary          /////////////////////////
 ////////////////////////////////////////////////////////////////////////////
 
-fn f_1_sized_binary<'a, 'i, T1, T2, U2, FBool, F1, F2>(
+fn f_1_sized_binary<'a, 'i, T1, T2, U2, F1, F2>(
     c1: &'a mut ColumnWrapper,
     c1_index: &ColumnDataIndex,
     bitmap_update_required: &bool,
@@ -183,7 +183,7 @@ where
     let c2_iter = c2.clone().into_iter();
 
     let is_set_operation = match f {
-        FType::Set(_) => true,
+        FType::Insert(_) => true,
         FType::Update(_) => false,
         FType::_Phantom(_) => unreachable!(),
     };
@@ -200,20 +200,18 @@ where
         assert_eq!(c1_bitmap.len(), 0);
         assert_eq!(c1_index.len(), None);
 
-        let (f_data, f_bitmap): (F1, FBool) = match f {
-            FType::Set((f1, f2)) => (f1, f2),
+        let f_data: F1 = match f {
+            FType::Insert(f1) => f1,
             _ => Err("Cannnot update a non-slice")?,
         };
         match bitmap_update_required {
             true => {
-                c1_data.extend(c2_iter.map(|(c2_value, c2_bitmap)| f_data(c2_value, c2_bitmap)));
-                c1_bitmap.extend(
-                    c2.into_iter()
-                        .map(|(_c2_value, c2_bitmap)| f_bitmap(c2_bitmap)),
-                );
+                c1_data.extend(c2_iter.map(|(c2_value, c2_bitmap)| f_data(c2_value, c2_bitmap).1));
+                c1_bitmap
+                    .extend(c2_iter.map(|(c2_value, c2_bitmap)| f_data(c2_value, c2_bitmap).0));
             }
             false => {
-                c1_data.extend(c2_iter.map(|(c2_value, c2_bitmap)| f_data(c2_value, c2_bitmap)))
+                c1_data.extend(c2_iter.map(|(c2_value, c2_bitmap)| f_data(c2_value, c2_bitmap).1));
             }
         }
     } else {
@@ -236,19 +234,19 @@ where
         }
 
         match f {
-            FType::Set((f_data, f_bitmap)) => match (c1_index.is_some(), bitmap_update_required) {
+            FType::Insert(f_data) => match (c1_index.is_some(), bitmap_update_required) {
                 (true, true) => {
                     let c1_bitmap = c1_bitmap.downcast_mut().unwrap();
                     c1_index.downcast_ref()?.iter().zip(c2).for_each(
                         |(i, (c2_value, c2_bitmap))| {
-                            c1_data[*i] = f_data(c2_value, c2_bitmap);
-                            c1_bitmap[*i] = f_bitmap(c2_bitmap);
+                            c1_data[*i] = f_data(c2_value, c2_bitmap).1;
+                            c1_bitmap[*i] = f_data(c2_value, c2_bitmap).0;
                         },
                     )
                 }
                 (true, false) => c1_index.downcast_ref()?.iter().zip(c2).for_each(
                     |(i, (c2_value, c2_bitmap))| {
-                        c1_data[*i] = f_data(c2_value, c2_bitmap);
+                        c1_data[*i] = f_data(c2_value, c2_bitmap).1;
                     },
                 ),
                 (false, true) => {
@@ -258,8 +256,8 @@ where
                         .zip(c1_bitmap.iter_mut())
                         .zip(c2)
                         .for_each(|((c1_value, c1_bitmap), (c2_value, c2_bitmap))| {
-                            *c1_value = f_data(c2_value, c2_bitmap);
-                            *c1_bitmap = f_bitmap(c2_bitmap);
+                            *c1_value = f_data(c2_value, c2_bitmap).1;
+                            *c1_bitmap = f_data(c2_value, c2_bitmap).0;
                         })
                 }
                 (false, false) => {
@@ -267,7 +265,7 @@ where
                         .iter_mut()
                         .zip(c2)
                         .for_each(|(c1_value, (c2_value, c2_bitmap))| {
-                            *c1_value = f_data(c2_value, c2_bitmap);
+                            *c1_value = f_data(c2_value, c2_bitmap).1;
                         })
                 }
             },
@@ -279,14 +277,17 @@ where
                         f(
                             c1_data.get_mut(*i).unwrap(),
                             c1_bitmap.get_mut(*i).unwrap(),
-                            c2_value,
-                            c2_bitmap,
+                            (c2_value, c2_bitmap),
                         );
                     },
                 ),
                 (true, false) => c1_index.downcast_ref()?.iter().zip(c2).for_each(
                     |(i, (c2_value, c2_bitmap))| {
-                        f(c1_data.get_mut(*i).unwrap(), &mut true, c2_value, c2_bitmap);
+                        f(
+                            c1_data.get_mut(*i).unwrap(),
+                            &mut true,
+                            (c2_value, c2_bitmap),
+                        );
                     },
                 ),
                 (false, true) => c1_data
@@ -294,14 +295,14 @@ where
                     .zip(c1_bitmap.downcast_mut().unwrap().iter_mut())
                     .zip(c2)
                     .for_each(|((c1_value, c1_bitmap), (c2_value, c2_bitmap))| {
-                        f(c1_value, c1_bitmap, c2_value, c2_bitmap);
+                        f(c1_value, c1_bitmap, (c2_value, c2_bitmap));
                     }),
                 (false, false) => {
                     c1_data
                         .iter_mut()
                         .zip(c2)
                         .for_each(|(c1_value, (c2_value, c2_bitmap))| {
-                            f(c1_value, &mut true, c2_value, c2_bitmap);
+                            f(c1_value, &mut true, (c2_value, c2_bitmap));
                         })
                 }
             },
@@ -313,7 +314,7 @@ where
 
 ////////////////////////////////////////////////////////////////////////////
 
-fn f_2_sized_binary<'a, 'i, T1, T2, FBool, F1, F2>(
+fn f_2_sized_binary<'a, 'i, T1, T2, F1, F2>(
     c1: &'a mut ColumnWrapper,
     c1_index: &ColumnDataIndex,
     bitmap_update_required: &bool,
@@ -328,70 +329,70 @@ where
     F2: Fn(&mut T1, &mut bool, (&[u8], &bool)),
 {
     match c {
-        ReadBinaryColumn::BitmapIndex(c) => f_1_sized_binary::<T1, T2, _, _, _, _>(
+        ReadBinaryColumn::BitmapIndex(c) => f_1_sized_binary::<T1, T2, _, _, _>(
             c1,
             c1_index,
             bitmap_update_required,
             c.as_binary_iter(),
             f,
         ),
-        ReadBinaryColumn::BitmapNoIndex(c) => f_1_sized_binary::<T1, T2, _, _, _, _>(
+        ReadBinaryColumn::BitmapNoIndex(c) => f_1_sized_binary::<T1, T2, _, _, _>(
             c1,
             c1_index,
             bitmap_update_required,
             c.as_binary_iter(),
             f,
         ),
-        ReadBinaryColumn::NoBitmapIndex(c) => f_1_sized_binary::<T1, T2, _, _, _, _>(
+        ReadBinaryColumn::NoBitmapIndex(c) => f_1_sized_binary::<T1, T2, _, _, _>(
             c1,
             c1_index,
             bitmap_update_required,
             c.as_binary_iter(),
             f,
         ),
-        ReadBinaryColumn::NoBitmapNoIndex(c) => f_1_sized_binary::<T1, T2, _, _, _, _>(
+        ReadBinaryColumn::NoBitmapNoIndex(c) => f_1_sized_binary::<T1, T2, _, _, _>(
             c1,
             c1_index,
             bitmap_update_required,
             c.as_binary_iter(),
             f,
         ),
-        ReadBinaryColumn::Const(c) => f_1_sized_binary::<T1, T2, _, _, _, _>(
+        ReadBinaryColumn::Const(c) => f_1_sized_binary::<T1, T2, _, _, _>(
             c1,
             c1_index,
             bitmap_update_required,
             c.as_binary_iter(),
             f,
         ),
-        ReadBinaryColumn::BitmapIndexOrig(c) => f_1_sized_binary::<T1, T2, _, _, _, _>(
+        ReadBinaryColumn::BitmapIndexOrig(c) => f_1_sized_binary::<T1, T2, _, _, _>(
             c1,
             c1_index,
             bitmap_update_required,
             c.as_binary_iter(),
             f,
         ),
-        ReadBinaryColumn::BitmapNoIndexOrig(c) => f_1_sized_binary::<T1, T2, _, _, _, _>(
+        ReadBinaryColumn::BitmapNoIndexOrig(c) => f_1_sized_binary::<T1, T2, _, _, _>(
             c1,
             c1_index,
             bitmap_update_required,
             c.as_binary_iter(),
             f,
         ),
-        ReadBinaryColumn::NoBitmapIndexOrig(c) => f_1_sized_binary::<T1, T2, _, _, _, _>(
+        ReadBinaryColumn::NoBitmapIndexOrig(c) => f_1_sized_binary::<T1, T2, _, _, _>(
             c1,
             c1_index,
             bitmap_update_required,
             c.as_binary_iter(),
             f,
         ),
-        ReadBinaryColumn::NoBitmapNoIndexOrig(c) => f_1_sized_binary::<T1, T2, _, _, _, _>(
+        ReadBinaryColumn::NoBitmapNoIndexOrig(c) => f_1_sized_binary::<T1, T2, _, _, _>(
             c1,
             c1_index,
             bitmap_update_required,
             c.as_binary_iter(),
             f,
         ),
-        ReadBinaryColumn::ConstOrig(c) => f_1_sized_binary::<T1, T2, _, _, _, _>(
+        ReadBinaryColumn::ConstOrig(c) => f_1_sized_binary::<T1, T2, _, _, _>(
             c1,
             c1_index,
             bitmap_update_required,
@@ -403,19 +404,16 @@ where
 
 ////////////////////////////////////////////////////////////////////////////
 
-pub fn set_2_sized_binary_unroll<'a, T1, T2, FBool, F>(
+pub fn set_2_sized_binary_unroll<'a, T1, T2, F>(
     c1: &'a mut ColumnWrapper,
     input: &'a [InputTypes<'a>],
     bitmap_update_required: &bool,
     f: F,
-    f_bitmap: FBool,
 ) -> Result<(), ErrorDesc>
 where
     T1: 'static + Send + Sync,
     T2: 'static + Send + Sync + AsBytes,
-
-    FBool: Fn(&bool) -> bool,
-    F: Fn(&[u8], &bool) -> T1,
+    F: Fn(&[u8], &bool) -> (bool, T1),
 {
     let mut c2_read_column = ReadBinaryColumn::<T2>::from_input(&input[0]);
 
@@ -440,10 +438,10 @@ where
         }
     };
 
-    let dummy = |_: &mut T1, _: &mut bool, _: &[u8], _: &bool| {};
-    let f: FType<T1, [u8], _, _, _> = FType::new_set(f, dummy, f_bitmap);
+    let dummy = |_: &mut T1, _: &mut bool, (_, _): (&[u8], &bool)| {};
+    let f: FType<T1, [u8], _, _> = FType::new_insert(f, dummy);
 
-    f_2_sized_binary::<T1, T2, _, _, _>(
+    f_2_sized_binary::<T1, T2, _, _>(
         c1,
         &ColumnDataIndex::None,
         bitmap_update_required,
