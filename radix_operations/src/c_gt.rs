@@ -13,7 +13,7 @@ macro_rules! operation_load {
                 type T3=$tr;
                 let signature=sig![OP; T2, T3];
                 let op=Operation{
-                    f:  paste!{[<eq_ $tl:lower _ $tr:lower>]},
+                    f:  paste!{[<gt_ $tl:lower _ $tr:lower>]},
                     output_type_id: std::any::TypeId::of::<T1>(),
                     is_assign_op: false,
                     associated_assign_op: None,
@@ -28,7 +28,7 @@ macro_rules! operation_impl_copy {
     ($(($tl:ty, $tr:ty))+) => ($(
         paste!
         {
-            fn [<eq_$tl:lower _ $tr:lower>](c1: &mut ColumnWrapper, _c1_index: &ColumnDataF<usize>, input:&[InputTypes])->Result<(),ErrorDesc>
+            fn [<gt_$tl:lower _ $tr:lower>](c1: &mut ColumnWrapper, _c1_index: &ColumnDataIndex, input:&[InputTypes])->Result<(),ErrorDesc>
             {
 
                 type T1=bool;
@@ -57,7 +57,7 @@ macro_rules! operation_impl_copy {
 macro_rules! operation_impl_binary {
     ($(($tl:ty, $tr:ty))+) => ($(
         paste!   {
-            fn [<eq_$tl:lower _ $tr:lower>](c1: &mut ColumnWrapper, _c1_index: &ColumnDataF<usize>, input:&[InputTypes])->Result<(),ErrorDesc>
+            fn [<gt_$tl:lower _ $tr:lower>](c1: &mut ColumnWrapper, _c1_index: &ColumnDataIndex, input:&[InputTypes])->Result<(),ErrorDesc>
             {
                 type T1=bool;
                 type T2=$tl;

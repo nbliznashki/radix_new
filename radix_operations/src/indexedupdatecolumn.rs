@@ -12,7 +12,7 @@ pub struct IUCNoBitmapNoIndex<'a, T> {
 }
 impl<'a, T> IUCNoBitmapNoIndex<'a, T> {
     #[inline]
-    pub fn apply<F, I>(&mut self, iter: I, mut f: F)
+    pub fn update<F, I>(&mut self, iter: I, mut f: F)
     where
         I: ExactSizeIterator,
         F: FnMut(&mut T, &mut bool, I::Item),
@@ -23,6 +23,18 @@ impl<'a, T> IUCNoBitmapNoIndex<'a, T> {
             .zip(iter)
             .for_each(|(d, source)| f(d, &mut true, source));
     }
+    #[inline]
+    pub fn assign<F, I>(&mut self, iter: I, mut f: F)
+    where
+        I: ExactSizeIterator,
+        F: FnMut(I::Item) -> (bool, T),
+    {
+        &mut self
+            .data
+            .iter_mut()
+            .zip(iter)
+            .for_each(|(d, source)| *d = f(source).1);
+    }
 }
 pub struct IUCBitmapNoIndex<'a, T> {
     pub data: &'a mut [T],
@@ -30,7 +42,7 @@ pub struct IUCBitmapNoIndex<'a, T> {
 }
 impl<'a, T> IUCBitmapNoIndex<'a, T> {
     #[inline]
-    pub fn apply<F, I>(&mut self, iter: I, mut f: F)
+    pub fn update<F, I>(&mut self, iter: I, mut f: F)
     where
         I: ExactSizeIterator,
         F: FnMut(&mut T, &mut bool, I::Item),
@@ -42,6 +54,23 @@ impl<'a, T> IUCBitmapNoIndex<'a, T> {
             .zip(iter)
             .for_each(|((data, bitmap), source)| f(data, bitmap, source));
     }
+    #[inline]
+    pub fn assign<F, I>(&mut self, iter: I, mut f: F)
+    where
+        I: ExactSizeIterator,
+        F: FnMut(I::Item) -> (bool, T),
+    {
+        &mut self
+            .data
+            .iter_mut()
+            .zip(self.bitmap.iter_mut())
+            .zip(iter)
+            .for_each(|((data, bitmap), source)| {
+                let (b_new, d_new) = f(source);
+                *data = d_new;
+                *bitmap = b_new;
+            });
+    }
 }
 pub struct IUCNoBitmapIndex<'a, T> {
     pub data: &'a mut [T],
@@ -50,7 +79,7 @@ pub struct IUCNoBitmapIndex<'a, T> {
 
 impl<'a, T> IUCNoBitmapIndex<'a, T> {
     #[inline]
-    pub fn apply<F, I>(&mut self, iter: I, mut f: F)
+    pub fn update<F, I>(&mut self, iter: I, mut f: F)
     where
         I: ExactSizeIterator,
         F: FnMut(&mut T, &mut bool, I::Item),
@@ -60,6 +89,17 @@ impl<'a, T> IUCNoBitmapIndex<'a, T> {
             .iter()
             .zip(iter)
             .for_each(|(i, source)| f(&mut self.data[*i], &mut true, source));
+    }
+    #[inline]
+    pub fn assign<F, I>(&mut self, iter: I, mut f: F)
+    where
+        I: ExactSizeIterator,
+        F: FnMut(I::Item) -> (bool, T),
+    {
+        &mut self.index.iter().zip(iter).for_each(|(i, source)| {
+            let (_, d_new) = f(source);
+            self.data[*i] = d_new;
+        });
     }
 }
 
@@ -71,7 +111,7 @@ pub struct IUCBitmapIndex<'a, T> {
 
 impl<'a, T> IUCBitmapIndex<'a, T> {
     #[inline]
-    pub fn apply<F, I>(&mut self, iter: I, mut f: F)
+    pub fn update<F, I>(&mut self, iter: I, mut f: F)
     where
         I: ExactSizeIterator,
         F: FnMut(&mut T, &mut bool, I::Item),
@@ -82,6 +122,18 @@ impl<'a, T> IUCBitmapIndex<'a, T> {
             .zip(iter)
             .for_each(|(i, source)| f(&mut self.data[*i], &mut self.bitmap[*i], source));
     }
+    #[inline]
+    pub fn assign<F, I>(&mut self, iter: I, mut f: F)
+    where
+        I: ExactSizeIterator,
+        F: FnMut(I::Item) -> (bool, T),
+    {
+        &mut self.index.iter().zip(iter).for_each(|(i, source)| {
+            let (b_new, d_new) = f(source);
+            self.data[*i] = d_new;
+            self.bitmap[*i] = b_new;
+        });
+    }
 }
 
 pub enum UpdateColumn<'a, T> {
@@ -91,17 +143,17 @@ pub enum UpdateColumn<'a, T> {
     NoBitmapNoIndex(IUCNoBitmapNoIndex<'a, T>),
 }
 
-impl<'a, T: Send + Sync + 'static>
+impl<'a, 'b, T: Send + Sync + 'static>
     From<(
-        &'a mut ColumnData<'a>,
-        &'a mut ColumnDataF<'a, bool>,
+        &'a mut ColumnData<'b>,
+        &'a mut ColumnDataF<'b, bool>,
         &'a ColumnDataIndex<'a>,
     )> for UpdateColumn<'a, T>
 {
     fn from(
         (data, bitmap, index): (
-            &'a mut ColumnData,
-            &'a mut ColumnDataF<'a, bool>,
+            &'a mut ColumnData<'b>,
+            &'a mut ColumnDataF<'b, bool>,
             &'a ColumnDataIndex<'a>,
         ),
     ) -> Self {
@@ -134,7 +186,7 @@ impl<'a, T> UpdateColumn<'a, T> {
             Self::NoBitmapNoIndex(c) => c.data.len(),
         }
     }
-    pub fn from_destination(c: &'a mut ColumnWrapper<'a>, c_index: &'a ColumnDataIndex) -> Self
+    pub fn from_destination(c: &'a mut ColumnWrapper, c_index: &'a ColumnDataIndex) -> Self
     where
         T: 'static + Send + Sync,
     {
@@ -143,16 +195,28 @@ impl<'a, T> UpdateColumn<'a, T> {
         c_read_column
     }
 
-    pub fn apply<F, I>(&mut self, iter: I, mut f: F)
+    pub fn update<F, I>(&mut self, iter: I, f: F)
     where
         I: ExactSizeIterator,
         F: FnMut(&mut T, &mut bool, I::Item),
     {
         match self {
-            Self::BitmapIndex(c) => c.apply(iter, f),
-            Self::BitmapNoIndex(c) => c.apply(iter, f),
-            Self::NoBitmapIndex(c) => c.apply(iter, f),
-            Self::NoBitmapNoIndex(c) => c.apply(iter, f),
+            Self::BitmapIndex(c) => c.update(iter, f),
+            Self::BitmapNoIndex(c) => c.update(iter, f),
+            Self::NoBitmapIndex(c) => c.update(iter, f),
+            Self::NoBitmapNoIndex(c) => c.update(iter, f),
+        }
+    }
+    pub fn assign<F, I>(&mut self, iter: I, f: F)
+    where
+        I: ExactSizeIterator,
+        F: FnMut(I::Item) -> (bool, T),
+    {
+        match self {
+            Self::BitmapIndex(c) => c.assign(iter, f),
+            Self::BitmapNoIndex(c) => c.assign(iter, f),
+            Self::NoBitmapIndex(c) => c.assign(iter, f),
+            Self::NoBitmapNoIndex(c) => c.assign(iter, f),
         }
     }
 }

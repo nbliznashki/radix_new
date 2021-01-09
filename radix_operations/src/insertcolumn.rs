@@ -14,7 +14,7 @@ pub struct ICBitmap<'a, T> {
 
 impl<'a, T> ICBitmap<'a, T> {
     #[inline]
-    pub fn insert<F, I>(&mut self, iter: I, iter2: I, f: F)
+    pub fn insert<F, I>(&mut self, iter: I, iter2: I, f: &F)
     where
         I: ExactSizeIterator,
         F: Fn(I::Item) -> (bool, T),
@@ -44,10 +44,10 @@ pub enum InsertColumn<'a, T> {
     NoBitmap(ICNoBitmap<'a, T>),
 }
 
-impl<'a, T: Send + Sync + 'static>
+impl<'a, 'b, T: Send + Sync + 'static>
     From<(
-        &'a mut ColumnData<'a>,
-        &'a mut ColumnDataF<'a, bool>,
+        &'a mut ColumnData<'b>,
+        &'a mut ColumnDataF<'b, bool>,
         bool,
         usize,
     )> for InsertColumn<'a, T>
@@ -55,7 +55,7 @@ impl<'a, T: Send + Sync + 'static>
     fn from(
         (data, bitmap, bitmap_update_required, target_length): (
             &'a mut ColumnData,
-            &'a mut ColumnDataF<'a, bool>,
+            &'a mut ColumnDataF<bool>,
             bool,
             usize,
         ),
@@ -90,8 +90,8 @@ impl<'a, T> InsertColumn<'a, T> {
             Self::NoBitmap(c) => c.data.len(),
         }
     }
-    pub fn from_destination(
-        c: &'a mut ColumnWrapper<'a>,
+    pub fn from_destination<'b>(
+        c: &'a mut ColumnWrapper<'b>,
         bitmap_update_required: bool,
         target_len: usize,
     ) -> Self
@@ -105,7 +105,7 @@ impl<'a, T> InsertColumn<'a, T> {
     }
 
     #[inline]
-    pub fn insert<F, I>(&mut self, iter: I, iter2: I, f: F)
+    pub fn insert<F, I>(&mut self, iter: I, iter2: I, f: &F)
     where
         I: ExactSizeIterator,
         F: Fn(I::Item) -> (bool, T),

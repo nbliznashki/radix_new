@@ -309,7 +309,7 @@ macro_rules! sized_types_impl {
                     let input=vec![InputTypes::Ref(src, src_index)];
 
 
-                    insert_2_sized_sized_unroll::<MaybeUninit<T>, T, _>(dst, &input, &bitmap_update_required, |c1_data,c1_bool|
+                    assign_2_sized_sized_unroll::<MaybeUninit<T>, T, _>(dst, &input, &bitmap_update_required, |c1_data,c1_bool|
                         (*c1_bool, MaybeUninit::new(*c1_data))
                    )
 
@@ -728,7 +728,7 @@ macro_rules! binary_types_impl {
                     let input=vec![InputTypes::Ref(src, src_index)];
 
 
-                    set_2_sized_binary_unroll::<MaybeUninit<T>, T, _>(dst, &&*input, &bitmap_update_required, |c1_data,c1_bool|
+                    assign_2_sized_binary_unroll::<MaybeUninit<T>, T, _>(dst, &&*input, &bitmap_update_required, |c1_data,c1_bool|
                         (*c1_bool, MaybeUninit::new(<T as AsBytes>::from_bytes(c1_data))))
 
 
