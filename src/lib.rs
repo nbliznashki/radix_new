@@ -244,13 +244,13 @@ mod tests {
         ];
 
         t.push_index(c3_index, &[0]).unwrap();
-
-        t.op(&dict, "==", &2, &[1, 0]).unwrap();
+        let e = TableExpression::new("==", &[0, 1]);
+        t.add_expression_as_new_column(&dict, &e);
 
         let expected_result = vec![
             "true", "(null)", "true", "false", "true", "false", "true", "false", "(null)",
         ];
-        let result = t.materialize_as_string(&dict, &2).unwrap();
+        let result = t.materialize_as_string(&dict, &3).unwrap();
         assert_eq!(result, expected_result);
 
         //t.print(&dict).unwrap();
@@ -313,12 +313,13 @@ mod tests {
 
         t.push_index(c2_index, &[1]).unwrap();
 
-        t.op(&dict, "==", &2, &[1, 0]).unwrap();
+        let e = TableExpression::new("==", &[0, 1]);
+        t.add_expression_as_new_column(&dict, &e);
 
         let expected_result = vec![
             "true", "(null)", "true", "false", "true", "false", "true", "false", "(null)",
         ];
-        let result = t.materialize_as_string(&dict, &2).unwrap();
+        let result = t.materialize_as_string(&dict, &3).unwrap();
         assert_eq!(result, expected_result);
     }
     #[test]

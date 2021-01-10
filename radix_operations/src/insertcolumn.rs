@@ -14,13 +14,17 @@ pub struct ICBitmap<'a, T> {
 
 impl<'a, T> ICBitmap<'a, T> {
     #[inline]
-    pub fn insert<F, I>(&mut self, iter: I, iter2: I, f: &F)
+    pub fn insert<F, I>(&mut self, iter: I, f: &F)
     where
         I: ExactSizeIterator,
         F: Fn(I::Item) -> (bool, T),
     {
-        self.data.extend(iter.map(f).map(|a| a.1));
-        self.bitmap.extend(iter2.map(f).map(|a| a.0));
+        self.data.reserve(iter.len());
+        self.bitmap.reserve(iter.len());
+        iter.map(f).for_each(|(b, d)| {
+            self.bitmap.push(b);
+            self.data.push(d);
+        });
     }
 }
 
@@ -105,13 +109,13 @@ impl<'a, T> InsertColumn<'a, T> {
     }
 
     #[inline]
-    pub fn insert<F, I>(&mut self, iter: I, iter2: I, f: &F)
+    pub fn insert<F, I>(&mut self, iter: I, f: &F)
     where
         I: ExactSizeIterator,
         F: Fn(I::Item) -> (bool, T),
     {
         match self {
-            Self::Bitmap(c) => c.insert(iter, iter2, f),
+            Self::Bitmap(c) => c.insert(iter, f),
             Self::NoBitmap(c) => c.insert(iter, f),
         }
     }

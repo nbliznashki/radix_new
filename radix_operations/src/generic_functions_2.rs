@@ -1,5 +1,5 @@
 use crate::{
-    FType, IndexedMutColumn, InputTypes, InsertColumn, ReadBinaryColumn, ReadColumn, UpdateColumn,
+    FType2, IndexedMutColumn, InputTypes, InsertColumn, ReadBinaryColumn, ReadColumn, UpdateColumn,
 };
 use radix_column::*;
 
@@ -12,7 +12,7 @@ use radix_column::*;
 fn f_1_sized_sized<'a, 'i, T1, T2, U2, F1, F2>(
     c1: &'a mut IndexedMutColumn<T1>,
     c2: U2,
-    f: FType<'a, T1, T2, F1, F2>,
+    f: FType2<'a, T1, T2, F1, F2>,
 ) -> Result<(), ErrorDesc>
 where
     'a: 'i,
@@ -25,13 +25,13 @@ where
     F2: Fn(&mut T1, &mut bool, (&T2, &bool)),
 {
     match (f, c1) {
-        (FType::Assign(f), IndexedMutColumn::Insert(tgt)) => {
-            tgt.insert(c2.clone().into_iter(), c2.into_iter(), &|(a, b)| f(a, b))
+        (FType2::Assign(f), IndexedMutColumn::Insert(tgt)) => {
+            tgt.insert(c2.into_iter(), &|(a, b)| f(a, b))
         }
-        (FType::Assign(f), IndexedMutColumn::Update(tgt)) => {
+        (FType2::Assign(f), IndexedMutColumn::Update(tgt)) => {
             tgt.assign(c2.into_iter(), &|(a, b)| f(a, b))
         }
-        (FType::Update(f), IndexedMutColumn::Update(tgt)) => {
+        (FType2::Update(f), IndexedMutColumn::Update(tgt)) => {
             tgt.update(c2.into_iter(), |a, b, c| f(a, b, c))
         }
         _ => panic!(),
@@ -44,7 +44,7 @@ where
 fn f_2_sized_sized<'a, 'i, T1, T2, F1, F2>(
     c1: &'a mut IndexedMutColumn<T1>,
     c: &'a ReadColumn<'a, T2>,
-    f: FType<'a, T1, T2, F1, F2>,
+    f: FType2<'a, T1, T2, F1, F2>,
 ) -> Result<(), ErrorDesc>
 where
     'a: 'i,
@@ -89,7 +89,7 @@ where
     let mut c1_mut_column = IndexedMutColumn::Update(c1_assign_column);
 
     let dummy = |_: &mut T1, _: &mut bool, (_, _): (&T2, &bool)| panic!("Dummy function called");
-    let f: FType<T1, T2, _, _> = FType::new_assign(f, dummy);
+    let f: FType2<T1, T2, _, _> = FType2::new_assign(f, dummy);
 
     f_2_sized_sized(&mut c1_mut_column, &c2_read_column, f)
 }
@@ -121,7 +121,7 @@ where
     let mut c1_mut_column = IndexedMutColumn::Insert(c1_insert_column);
 
     let dummy = |_: &mut T1, _: &mut bool, (_, _): (&T2, &bool)| {};
-    let f: FType<T1, T2, _, _> = FType::new_assign(f, dummy);
+    let f: FType2<T1, T2, _, _> = FType2::new_assign(f, dummy);
 
     f_2_sized_sized(&mut c1_mut_column, &c2_read_column, f)
 }
@@ -139,14 +139,14 @@ where
 {
     let mut c2_read_column = ReadColumn::<T2>::from_input(&input[0]);
 
-    let c1 = UpdateColumn::from_destination(c1, c1_index);
-    c2_read_column.update_len_if_const(c1.len());
+    let c1_update_column = UpdateColumn::from_destination(c1, c1_index);
+    c2_read_column.update_len_if_const(c1_update_column.len());
 
-    assert_eq!(c2_read_column.len(), c1.len());
+    assert_eq!(c2_read_column.len(), c1_update_column.len());
 
     let dummy = |_: &T2, _: &bool| -> (bool, T1) { panic!("dummy function called") };
-    let f: FType<T1, T2, _, _> = FType::new_update(dummy, f);
-    let mut c1 = IndexedMutColumn::Update(c1);
+    let f: FType2<T1, T2, _, _> = FType2::new_update(dummy, f);
+    let mut c1 = IndexedMutColumn::Update(c1_update_column);
     f_2_sized_sized(&mut c1, &c2_read_column, f)
 }
 
@@ -159,7 +159,7 @@ where
 fn f_1_sized_binary<'a, 'i, T1, T2, U2, F1, F2>(
     c1: &'a mut IndexedMutColumn<T1>,
     c2: U2,
-    f: FType<'a, T1, [u8], F1, F2>,
+    f: FType2<'a, T1, [u8], F1, F2>,
 ) -> Result<(), ErrorDesc>
 where
     'a: 'i,
@@ -172,13 +172,13 @@ where
     F2: Fn(&mut T1, &mut bool, (&[u8], &bool)),
 {
     match (f, c1) {
-        (FType::Assign(f), IndexedMutColumn::Insert(tgt)) => {
-            tgt.insert(c2.clone().into_iter(), c2.into_iter(), &|(a, b)| f(a, b))
+        (FType2::Assign(f), IndexedMutColumn::Insert(tgt)) => {
+            tgt.insert(c2.into_iter(), &|(a, b)| f(a, b))
         }
-        (FType::Assign(f), IndexedMutColumn::Update(tgt)) => {
+        (FType2::Assign(f), IndexedMutColumn::Update(tgt)) => {
             tgt.assign(c2.into_iter(), &|(a, b)| f(a, b))
         }
-        (FType::Update(f), IndexedMutColumn::Update(tgt)) => {
+        (FType2::Update(f), IndexedMutColumn::Update(tgt)) => {
             tgt.update(c2.into_iter(), |a, b, c| f(a, b, c))
         }
         _ => panic!(),
@@ -191,7 +191,7 @@ where
 fn f_2_sized_binary<'a, 'i, T1, T2, F1, F2>(
     c1: &'a mut IndexedMutColumn<T1>,
     c: &'a ReadBinaryColumn<'a, T2>,
-    f: FType<'a, T1, [u8], F1, F2>,
+    f: FType2<'a, T1, [u8], F1, F2>,
 ) -> Result<(), ErrorDesc>
 where
     'a: 'i,
@@ -255,7 +255,7 @@ where
     let mut c1_mut_column = IndexedMutColumn::Update(c1_assign_column);
 
     let dummy = |_: &mut T1, _: &mut bool, (_, _): (&[u8], &bool)| {};
-    let f: FType<T1, [u8], _, _> = FType::new_assign(f, dummy);
+    let f: FType2<T1, [u8], _, _> = FType2::new_assign(f, dummy);
 
     f_2_sized_binary::<T1, T2, _, _>(&mut c1_mut_column, &c2_read_column, f)
 }
@@ -278,7 +278,7 @@ where
     let mut c1_mut_column = IndexedMutColumn::Insert(c1_insert_column);
 
     let dummy = |_: &mut T1, _: &mut bool, (_, _): (&[u8], &bool)| {};
-    let f: FType<T1, [u8], _, _> = FType::new_assign(f, dummy);
+    let f: FType2<T1, [u8], _, _> = FType2::new_assign(f, dummy);
 
     f_2_sized_binary::<T1, T2, _, _>(&mut c1_mut_column, &c2_read_column, f)
 }

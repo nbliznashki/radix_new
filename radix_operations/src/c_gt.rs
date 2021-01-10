@@ -47,8 +47,8 @@ macro_rules! operation_impl_copy {
 
                 let bitmap_update_required=c2.bitmap().is_some()||c3.bitmap().is_some();
 
-                set_3_sized_sized_sized_unroll::<T1,T2, T3,_,_,>(c1, &input, &bitmap_update_required, |c2_data, _c2_bool, c3_data,_c3_bool,| {
-                    *c2_data>T2::from(*c3_data)}, |c2_bitmap, c3_bitmap| *c2_bitmap&&*c3_bitmap)
+                insert_3_sized_sized_sized_unroll::<T1,T2, T3,_>(c1, &input, &bitmap_update_required, |c2_data, c2_bitmap, c3_data,c3_bitmap,| {
+                    (*c2_bitmap&&*c3_bitmap, *c2_data>T2::from(*c3_data))} )
             }
         }
     )+)
@@ -78,8 +78,8 @@ macro_rules! operation_impl_binary {
                 let bitmap_update_required=c2.bitmap().is_some()||c3.bitmap().is_some();
 
 
-                set_3_sized_binary_binary_unroll::<T1,T2, T3,_,_,>(c1, &input, &bitmap_update_required, |c2_data, _c2_bool, c3_data,_c3_bool,| {
-                    *c2_data>*c3_data}, |c2_bitmap, c3_bitmap| *c2_bitmap&&*c3_bitmap)
+                insert_3_sized_binary_binary_unroll::<T1,T2, T3,_>(c1, &input, &bitmap_update_required, |c2_data, c2_bitmap, c3_data,c3_bitmap,| {
+                    (*c2_bitmap&&*c3_bitmap, *c2_data>*c3_data)})
 
 
             }

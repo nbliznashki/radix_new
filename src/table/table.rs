@@ -402,71 +402,71 @@ impl<'a> Table<'a> {
     }
 
     //TO-DO - switch to a more general execution framework
-    pub fn op(
-        &mut self,
-        dict: &Dictionary,
-        op: &str,
-        c1_id: &usize,
-        input_ids: &[usize],
-    ) -> Result<(), ErrorDesc> {
-        let (indexes, columnindexmap) = (&self.indexes, &self.columnindexmap);
+    /*pub fn op(
+            &mut self,
+            dict: &Dictionary,
+            op: &str,
+            c1_id: &usize,
+            input_ids: &[usize],
+        ) -> Result<(), ErrorDesc> {
+            let (indexes, columnindexmap) = (&self.indexes, &self.columnindexmap);
 
-        if input_ids.iter().find(|c| *c == c1_id).is_some() {
-            Err(format!("In a write operation, the output column {} cannot also be equal to one of the inputs ({:?})", c1_id, &input_ids))?
-        };
+            if input_ids.iter().find(|c| *c == c1_id).is_some() {
+                Err(format!("In a write operation, the output column {} cannot also be equal to one of the inputs ({:?})", c1_id, &input_ids))?
+            };
 
-        let number_of_columns = self.number_of_columns()?;
-        if (*c1_id >= number_of_columns)
-            || input_ids
-                .iter()
-                .find(|c| **c >= number_of_columns)
-                .is_some()
-        {
-            Err(format!(
-                "Column index out of bounds: write column: {}, column inputs {:?}, while table has {} columns",
-                c1_id, &input_ids, number_of_columns
-            ))?
-        };
-
-        self.columns
-            .par_iter_mut()
-            .zip_eq(indexes.par_iter())
-            .for_each(|(v_col, v_ind)| {
-                let (s_left, s_right) = v_col.split_at_mut(*c1_id);
-                let (c1, s_right) = s_right.split_at_mut(1);
-                let c1 = &mut c1[0];
-                let index_empty: ColumnDataIndex = ColumnDataIndex::None;
-
-                let c1_index = match columnindexmap.get(c1_id) {
-                    Some(i) => &v_ind[*i],
-                    None => &index_empty,
-                };
-
-                let input: Vec<_> = input_ids
+            let number_of_columns = self.number_of_columns()?;
+            if (*c1_id >= number_of_columns)
+                || input_ids
                     .iter()
-                    .map(|c_id| {
-                        let c = if c_id < c1_id {
-                            &s_left[*c_id]
-                        } else {
-                            {
-                                &s_right[c_id - c1_id - 1]
-                            }
-                        };
-                        let c_index = match columnindexmap.get(c_id) {
-                            Some(i) => &v_ind[*i],
-                            None => &index_empty,
-                        };
+                    .find(|c| **c >= number_of_columns)
+                    .is_some()
+            {
+                Err(format!(
+                    "Column index out of bounds: write column: {}, column inputs {:?}, while table has {} columns",
+                    c1_id, &input_ids, number_of_columns
+                ))?
+            };
 
-                        InputTypes::Ref(c, c_index)
-                    })
-                    .collect();
+            self.columns
+                .par_iter_mut()
+                .zip_eq(indexes.par_iter())
+                .for_each(|(v_col, v_ind)| {
+                    let (s_left, s_right) = v_col.split_at_mut(*c1_id);
+                    let (c1, s_right) = s_right.split_at_mut(1);
+                    let c1 = &mut c1[0];
+                    let index_empty: ColumnDataIndex = ColumnDataIndex::None;
 
-                c1.op(dict, op, c1_index, &input).unwrap();
-            });
+                    let c1_index = match columnindexmap.get(c1_id) {
+                        Some(i) => &v_ind[*i],
+                        None => &index_empty,
+                    };
 
-        Ok(())
-    }
+                    let input: Vec<_> = input_ids
+                        .iter()
+                        .map(|c_id| {
+                            let c = if c_id < c1_id {
+                                &s_left[*c_id]
+                            } else {
+                                {
+                                    &s_right[c_id - c1_id - 1]
+                                }
+                            };
+                            let c_index = match columnindexmap.get(c_id) {
+                                Some(i) => &v_ind[*i],
+                                None => &index_empty,
+                            };
 
+                            InputTypes::Ref(c, c_index)
+                        })
+                        .collect();
+
+                    c1.op(dict, op, c1_index, &input).unwrap();
+                });
+
+            Ok(())
+        }
+    */
     //TO-DO - switch to a more general execution framework
     pub fn filter(&mut self, dict: &Dictionary, expr: &TableExpression) -> Result<(), ErrorDesc> {
         let number_of_columns = self.number_of_columns()?;
