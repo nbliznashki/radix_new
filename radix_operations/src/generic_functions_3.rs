@@ -1,35 +1,8 @@
-use crate::InputTypes;
+use crate::{
+    ftype::FType3, IndexedMutColumn, InputTypes, InsertColumn, ReadBinaryColumn, ReadColumn,
+    UpdateColumn,
+};
 use radix_column::*;
-enum FType<'a, O1, O2, O3, FBool, F1, F2>
-where
-    O1: ?Sized,
-    O2: ?Sized,
-    O3: ?Sized,
-    FBool: Fn(&bool, &bool) -> bool,
-    F1: Fn(&O2, &bool, &O3, &bool) -> O1,
-    F2: Fn(&'a mut O1, &'a mut bool, &O2, &bool, &O3, &bool),
-{
-    Set((F1, FBool)),
-    Update(F2),
-    _Phantom((std::marker::PhantomData<&'a u8>, &'a O1, &'a O2, &'a O3)),
-}
-
-impl<'a, O1, O2, O3, FBool, F1, F2> FType<'a, O1, O2, O3, FBool, F1, F2>
-where
-    O1: ?Sized,
-    O2: ?Sized,
-    O3: ?Sized,
-    FBool: Fn(&bool, &bool) -> bool,
-    F1: Fn(&O2, &bool, &O3, &bool) -> O1,
-    F2: Fn(&'a mut O1, &'a mut bool, &O2, &bool, &O3, &bool),
-{
-    fn new_set(f: F1, _: F2, f_bitmap: FBool) -> Self {
-        Self::Set((f, f_bitmap))
-    }
-    fn new_update(_: F1, f: F2, _: FBool) -> Self {
-        Self::Update(f)
-    }
-}
 
 ////////////////////////////////////////////////////////////////////////////
 //////////////////                                 /////////////////////////
@@ -37,13 +10,11 @@ where
 //////////////////    sized sized sized            /////////////////////////
 ////////////////////////////////////////////////////////////////////////////
 
-fn f_1_sized_sized_sized<'a, 'i, T1, T2, T3, U2, U3, FBool, F1, F2>(
-    c1: &'a mut ColumnWrapper,
-    c1_index: &ColumnDataIndex,
-    bitmap_update_required: &bool,
+fn f_1_sized_sized_sized<'a, 'i, T1, T2, T3, U2, U3, F1, F2>(
+    c1: &'a mut IndexedMutColumn<T1>,
     c2: U2,
     c3: U3,
-    f: FType<'a, T1, T2, T3, FBool, F1, F2>,
+    f: FType3<'a, T1, T2, T3, F1, F2>,
 ) -> Result<(), ErrorDesc>
 where
     'a: 'i,
@@ -56,188 +27,35 @@ where
     U3: IntoIterator<Item = (&'i T3, &'i bool)>,
     U3::IntoIter: ExactSizeIterator,
     U3: Clone,
-    FBool: Fn(&bool, &bool) -> bool,
-    F1: Fn(&T2, &bool, &T3, &bool) -> T1,
-    F2: Fn(&mut T1, &mut bool, &T2, &bool, &T3, &bool),
+    F1: Fn(&T2, &bool, &T3, &bool) -> (bool, T1),
+    F2: Fn(&mut T1, &mut bool, (&T2, &bool, &T3, &bool)),
 {
-    let (c1, c1_bitmap) = c1.get_inner_mut();
-    let c2_iter = c2.clone().into_iter();
-    let c3_iter = c3.clone().into_iter();
-
-    assert_eq!(c2_iter.len(), c3_iter.len());
-
-    let is_set_operation = match f {
-        FType::Set(_) => true,
-        FType::Update(_) => false,
-        FType::_Phantom(_) => unreachable!(),
-    };
-
-    if is_set_operation && c1.is_owned() && c1.data_len::<T1>()? == 0 {
-        // We have to do an insert
-        // Requires an Owned column
-        // Bitmap should also be owned and empty
-        // Index should be empty
-
-        let c1_data: &mut Vec<T1> = c1.downcast_vec::<T1>()?;
-
-        assert_eq!(c1_index.len(), None);
-
-        let (f_data, f_bitmap): (F1, FBool) = match f {
-            FType::Set((f1, f2)) => (f1, f2),
-            _ => Err("Cannnot update a non-slice")?,
-        };
-        match bitmap_update_required {
-            true => {
-                c1_data.extend(c2_iter.zip(c3_iter).map(
-                    |((c2_value, c2_bitmap), (c3_value, c3_bitmap))| {
-                        f_data(c2_value, c2_bitmap, c3_value, c3_bitmap)
-                    },
-                ));
-                let c1_bitmap = c1_bitmap.downcast_vec()?;
-                assert_eq!(c1_bitmap.len(), 0);
-                c1_bitmap.extend(c2.into_iter().zip(c3.into_iter()).map(
-                    |((_c2_value, c2_bitmap), (_c3_value, c3_bitmap))| {
-                        f_bitmap(c2_bitmap, c3_bitmap)
-                    },
-                ));
-            }
-            false => c1_data.extend(c2_iter.zip(c3_iter).map(
-                |((c2_value, c2_bitmap), (c3_value, c3_bitmap))| {
-                    f_data(c2_value, c2_bitmap, c3_value, c3_bitmap)
-                },
-            )),
+    let iter = c2
+        .into_iter()
+        .zip(c3.into_iter())
+        .map(|((d2, b2), (d3, b3))| (d2, b2, d3, b3));
+    match (f, c1) {
+        (FType3::Assign(f), IndexedMutColumn::Insert(tgt)) => {
+            tgt.insert(iter, &|(a, b, c, d)| f(a, b, c, d))
         }
-    } else {
-        // Mut Borrow column
-        //- Should have correct storate reserved
-        //- Supports Set and Update operations
-
-        let c1_data = c1.downcast_mut::<T1>()?;
-        //let c1_bitmap = c1_bitmap.downcast_mut()?;
-
-        if *bitmap_update_required {
-            assert_eq!(c1_bitmap.len(), Some(c1_data.len()));
-        } else {
-            assert!(!c1_bitmap.is_some(), 0);
+        (FType3::Assign(f), IndexedMutColumn::Update(tgt)) => {
+            tgt.assign(iter, &|(a, b, c, d)| f(a, b, c, d))
         }
-
-        if c1_index.is_some() {
-            assert_eq!(c2_iter.len(), c1_index.len().unwrap());
-        } else {
-            assert_eq!(c1_data.len(), c2_iter.len());
+        (FType3::Update(f), IndexedMutColumn::Update(tgt)) => {
+            tgt.update(iter, |a, b, c| f(a, b, c))
         }
-
-        match f {
-            FType::Set((f_data, f_bitmap)) => match (c1_index.is_some(), bitmap_update_required) {
-                (true, true) => {
-                    let c1_bitmap = c1_bitmap.downcast_mut().unwrap();
-                    c1_index.downcast_ref()?.iter().zip(c2).zip(c3).for_each(
-                        |((i, (c2_value, c2_bitmap)), (c3_value, c3_bitmap))| {
-                            c1_data[*i] = f_data(c2_value, c2_bitmap, c3_value, c3_bitmap);
-                            c1_bitmap[*i] = f_bitmap(c2_bitmap, c3_bitmap);
-                        },
-                    )
-                }
-                (true, false) => c1_index.downcast_ref()?.iter().zip(c2).zip(c3).for_each(
-                    |((i, (c2_value, c2_bitmap)), (c3_value, c3_bitmap))| {
-                        c1_data[*i] = f_data(c2_value, c2_bitmap, c3_value, c3_bitmap);
-                    },
-                ),
-                (false, true) => {
-                    let c1_bitmap = c1_bitmap.downcast_mut().unwrap();
-                    c1_data
-                        .iter_mut()
-                        .zip(c1_bitmap.iter_mut())
-                        .zip(c2)
-                        .zip(c3)
-                        .for_each(
-                            |(
-                                ((c1_value, c1_bitmap), (c2_value, c2_bitmap)),
-                                (c3_value, c3_bitmap),
-                            )| {
-                                *c1_value = f_data(c2_value, c2_bitmap, c3_value, c3_bitmap);
-                                *c1_bitmap = f_bitmap(c2_bitmap, c3_bitmap);
-                            },
-                        )
-                }
-                (false, false) => c1_data.iter_mut().zip(c2).zip(c3).for_each(
-                    |((c1_value, (c2_value, c2_bitmap)), (c3_value, c3_bitmap))| {
-                        *c1_value = f_data(c2_value, c2_bitmap, c3_value, c3_bitmap);
-                    },
-                ),
-            },
-
-            FType::Update(f) => match (c1_index.is_some(), bitmap_update_required) {
-                (true, true) => {
-                    let c1_bitmap = c1_bitmap.downcast_mut().unwrap();
-                    c1_index.downcast_ref()?.iter().zip(c2).zip(c3).for_each(
-                        |((i, (c2_value, c2_bitmap)), (c3_value, c3_bitmap))| {
-                            f(
-                                c1_data.get_mut(*i).unwrap(),
-                                c1_bitmap.get_mut(*i).unwrap(),
-                                c2_value,
-                                c2_bitmap,
-                                c3_value,
-                                c3_bitmap,
-                            );
-                        },
-                    )
-                }
-                (true, false) => c1_index.downcast_ref()?.iter().zip(c2).zip(c3).for_each(
-                    |((i, (c2_value, c2_bitmap)), (c3_value, c3_bitmap))| {
-                        f(
-                            c1_data.get_mut(*i).unwrap(),
-                            &mut true,
-                            c2_value,
-                            c2_bitmap,
-                            c3_value,
-                            c3_bitmap,
-                        );
-                    },
-                ),
-                (false, true) => {
-                    let c1_bitmap = c1_bitmap.downcast_mut().unwrap();
-                    c1_data
-                        .iter_mut()
-                        .zip(c1_bitmap.iter_mut())
-                        .zip(c2)
-                        .zip(c3)
-                        .for_each(
-                            |(
-                                ((c1_value, c1_bitmap), (c2_value, c2_bitmap)),
-                                (c3_value, c3_bitmap),
-                            )| {
-                                f(
-                                    c1_value, c1_bitmap, c2_value, c2_bitmap, c3_value, c3_bitmap,
-                                );
-                            },
-                        )
-                }
-                (false, false) => c1_data.iter_mut().zip(c2).zip(c3).for_each(
-                    |((c1_value, (c2_value, c2_bitmap)), (c3_value, c3_bitmap))| {
-                        f(
-                            c1_value, &mut true, c2_value, c2_bitmap, c3_value, c3_bitmap,
-                        );
-                    },
-                ),
-            },
-            _ => Err("Function type should be either assign or update")?,
-        }
+        _ => panic!(),
     }
     Ok(())
 }
 
 ////////////////////////////////////////////////////////////////////////////
 
-fn f_2_sized_sized_sized<'a, 'i, T1, T2, T3, U3, FBool, F1, F2>(
-    c1: &'a mut ColumnWrapper,
-    c1_index: &ColumnDataIndex,
-    bitmap_update_required: &bool,
-    c: &'a ColumnWrapper,
-    c_index: &'a ColumnDataIndex,
+fn f_2_sized_sized_sized<'a, 'i, T1, T2, T3, U3, F1, F2>(
+    c1: &'a mut IndexedMutColumn<T1>,
+    c: &'a ReadColumn<'a, T2>,
     c3: U3,
-    f: FType<'a, T1, T2, T3, FBool, F1, F2>,
-    len: &usize,
+    f: FType3<'a, T1, T2, T3, F1, F2>,
 ) -> Result<(), ErrorDesc>
 where
     'a: 'i,
@@ -247,352 +65,150 @@ where
     U3: IntoIterator<Item = (&'i T3, &'i bool)>,
     U3::IntoIter: ExactSizeIterator,
     U3: Clone,
-    FBool: Fn(&bool, &bool) -> bool,
-    F1: Fn(&T2, &bool, &T3, &bool) -> T1,
-    F2: Fn(&mut T1, &mut bool, &T2, &bool, &T3, &bool),
+    F1: Fn(&T2, &bool, &T3, &bool) -> (bool, T1),
+    F2: Fn(&mut T1, &mut bool, (&T2, &bool, &T3, &bool)),
 {
-    let c_is_const = c.column().is_const();
-    let (c, c_bitmap) = c.get_inner_ref();
-    let c_data = c.downcast_ref::<T2>()?;
-
-    let c_const_val = || {
-        (0..*len)
-            .into_iter()
-            .map(|_| (&c_data[0], &c_bitmap.downcast_ref().unwrap()[0]))
-    };
-    let c_const_true = || (0..*len).into_iter().map(|_| (&c_data[0], &true));
-    let c_index_bitmap = || {
-        c_index
-            .downcast_ref()
-            .unwrap()
-            .iter()
-            .map(|i| (&c_data[*i], &c_bitmap.downcast_ref().unwrap()[*i]))
-    };
-    let c_index_nobitmap = || {
-        c_index
-            .downcast_ref()
-            .unwrap()
-            .iter()
-            .map(|i| (&c_data[*i], &true))
-    };
-    let c_noindex_bitmap = || {
-        c_data
-            .iter()
-            .zip(c_bitmap.downcast_ref().unwrap().iter())
-            .map(|(v, b)| (v, b))
-    };
-    let c_noindex_nobitmap = || c_data.iter().map(|v| (v, &true));
-
-    if c_is_const {
-        match c_bitmap.is_some() {
-            true => {
-                f_1_sized_sized_sized(c1, c1_index, bitmap_update_required, c_const_val(), c3, f)
-            }
-            false => {
-                f_1_sized_sized_sized(c1, c1_index, bitmap_update_required, c_const_true(), c3, f)
-            }
-        }
-    } else {
-        match (c_index.is_some(), c_bitmap.is_some()) {
-            (true, true) => f_1_sized_sized_sized(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c_index_bitmap(),
-                c3,
-                f,
-            ),
-            (true, false) => f_1_sized_sized_sized(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c_index_nobitmap(),
-                c3,
-                f,
-            ),
-            (false, true) => f_1_sized_sized_sized(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c_noindex_bitmap(),
-                c3,
-                f,
-            ),
-            (false, false) => f_1_sized_sized_sized(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c_noindex_nobitmap(),
-                c3,
-                f,
-            ),
-        }
+    match c {
+        ReadColumn::BitmapIndex(col) => f_1_sized_sized_sized(c1, col.as_iter(), c3, f),
+        ReadColumn::BitmapNoIndex(col) => f_1_sized_sized_sized(c1, col.as_iter(), c3, f),
+        ReadColumn::NoBitmapIndex(col) => f_1_sized_sized_sized(c1, col.as_iter(), c3, f),
+        ReadColumn::NoBitmapNoIndex(col) => f_1_sized_sized_sized(c1, col.as_iter(), c3, f),
+        ReadColumn::Const(col) => f_1_sized_sized_sized(c1, col.as_iter(), c3, f),
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////
 
-fn f_3_sized_sized_sized<'a, 'i, T1, T2, T3, FBool, F1, F2>(
-    c1: &'a mut ColumnWrapper,
-    c1_index: &ColumnDataIndex,
-    bitmap_update_required: &bool,
-    c2: &'a ColumnWrapper,
-    c2_index: &'a ColumnDataIndex,
-    c: &'a ColumnWrapper,
-    c_index: &'a ColumnDataIndex,
-    f: FType<'a, T1, T2, T3, FBool, F1, F2>,
-    len: &usize,
+fn f_3_sized_sized_sized<'a, 'i, T1, T2, T3, F1, F2>(
+    c1: &'a mut IndexedMutColumn<T1>,
+    c2: &'a ReadColumn<'a, T2>,
+    c: &'a ReadColumn<'a, T3>,
+    f: FType3<'a, T1, T2, T3, F1, F2>,
 ) -> Result<(), ErrorDesc>
 where
     'a: 'i,
     T1: 'static + Send + Sync,
     T2: 'static + Send + Sync,
     T3: 'static + Send + Sync,
-    FBool: Fn(&bool, &bool) -> bool,
-    F1: Fn(&T2, &bool, &T3, &bool) -> T1,
-    F2: Fn(&mut T1, &mut bool, &T2, &bool, &T3, &bool),
+    F1: Fn(&T2, &bool, &T3, &bool) -> (bool, T1),
+    F2: Fn(&mut T1, &mut bool, (&T2, &bool, &T3, &bool)),
 {
-    let c_is_const = c.column().is_const();
-    let (c, c_bitmap) = c.get_inner_ref();
-    let c_data = c.downcast_ref::<T3>()?;
-
-    let c_const_val = || {
-        (0..*len)
-            .into_iter()
-            .map(|_| (&c_data[0], &c_bitmap.downcast_ref().unwrap()[0]))
-    };
-    let c_const_true = || (0..*len).into_iter().map(|_| (&c_data[0], &true));
-    let c_index_bitmap = || {
-        c_index
-            .downcast_ref()
-            .unwrap()
-            .iter()
-            .map(|i| (&c_data[*i], &c_bitmap.downcast_ref().unwrap()[*i]))
-    };
-    let c_index_nobitmap = || {
-        c_index
-            .downcast_ref()
-            .unwrap()
-            .iter()
-            .map(|i| (&c_data[*i], &true))
-    };
-    let c_noindex_bitmap = || {
-        c_data
-            .iter()
-            .zip(c_bitmap.downcast_ref().unwrap().iter())
-            .map(|(v, b)| (v, b))
-    };
-    let c_noindex_nobitmap = || c_data.iter().map(|v| (v, &true));
-
-    if c_is_const {
-        match c_bitmap.is_some() {
-            true => f_2_sized_sized_sized(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c2,
-                c2_index,
-                c_const_val(),
-                f,
-                len,
-            ),
-            false => f_2_sized_sized_sized(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c2,
-                c2_index,
-                c_const_true(),
-                f,
-                len,
-            ),
-        }
-    } else {
-        match (c_index.is_some(), c_bitmap.is_some()) {
-            (true, true) => f_2_sized_sized_sized(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c2,
-                c2_index,
-                c_index_bitmap(),
-                f,
-                len,
-            ),
-            (true, false) => f_2_sized_sized_sized(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c2,
-                c2_index,
-                c_index_nobitmap(),
-                f,
-                len,
-            ),
-            (false, true) => f_2_sized_sized_sized(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c2,
-                c2_index,
-                c_noindex_bitmap(),
-                f,
-                len,
-            ),
-            (false, false) => f_2_sized_sized_sized(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c2,
-                c2_index,
-                c_noindex_nobitmap(),
-                f,
-                len,
-            ),
-        }
+    match c {
+        ReadColumn::BitmapIndex(col) => f_2_sized_sized_sized(c1, c2, col.as_iter(), f),
+        ReadColumn::BitmapNoIndex(col) => f_2_sized_sized_sized(c1, c2, col.as_iter(), f),
+        ReadColumn::NoBitmapIndex(col) => f_2_sized_sized_sized(c1, c2, col.as_iter(), f),
+        ReadColumn::NoBitmapNoIndex(col) => f_2_sized_sized_sized(c1, c2, col.as_iter(), f),
+        ReadColumn::Const(col) => f_2_sized_sized_sized(c1, c2, col.as_iter(), f),
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////
 
-pub fn set_3_sized_sized_sized_unroll<'a, T1, T2, T3, FBool, F>(
+pub fn assign_3_sized_sized_sized_unroll<'a, T1, T2, T3, F>(
     c1: &'a mut ColumnWrapper,
     input: &'a [InputTypes<'a>],
-    bitmap_update_required: &bool,
     f: F,
-    f_bitmap: FBool,
 ) -> Result<(), ErrorDesc>
 where
     T1: 'static + Send + Sync,
     T2: 'static + Send + Sync,
     T3: 'static + Send + Sync,
-    FBool: Fn(&bool, &bool) -> bool,
-    F: Fn(&T2, &bool, &T3, &bool) -> T1,
+    F: Fn(&T2, &bool, &T3, &bool) -> (bool, T1),
 {
-    let (c2, c2_index) = match &input[0] {
-        InputTypes::Ref(c, i) => (*c, *i),
-        InputTypes::Owned(c, i) => (c, i),
+    let mut c2_read_column = ReadColumn::<T2>::from_input(&input[0]);
+    let mut c3_read_column = ReadColumn::<T3>::from_input(&input[1]);
+
+    let c1_assign_column = UpdateColumn::<T1>::from_destination(c1, &ColumnDataIndex::None);
+    let len = c1_assign_column.len();
+
+    c2_read_column.update_len_if_const(len);
+    c3_read_column.update_len_if_const(len);
+
+    assert_eq!(len, c2_read_column.len());
+    assert_eq!(len, c3_read_column.len());
+
+    let mut c1_mut_column = IndexedMutColumn::Update(c1_assign_column);
+
+    let dummy = |_: &mut T1, _: &mut bool, (_, _, _, _): (&T2, &bool, &T3, &bool)| {
+        panic!("Dummy function called")
     };
+    let f: FType3<T1, T2, T3, _, _> = FType3::new_assign(f, dummy);
 
-    let (c3, c3_index) = match &input[1] {
-        InputTypes::Ref(c, i) => (*c, *i),
-        InputTypes::Owned(c, i) => (c, i),
-    };
-
-    let len = c1.column().data_len::<T1>()?;
-
-    let c2_len = if c2_index.is_some() {
-        c2_index.downcast_ref()?.len()
-    } else {
-        c2.column().data_len::<T2>()?
-    };
-
-    let c3_len = if c3_index.is_some() {
-        c3_index.downcast_ref()?.len()
-    } else {
-        c3.column().data_len::<T2>()?
-    };
-
-    let len = std::cmp::max(len, c2_len);
-    let len = std::cmp::max(len, c3_len);
-
-    if *bitmap_update_required && !c1.bitmap().is_some() {
-        if c1.column().is_owned() {
-            c1.bitmap_set(ColumnDataF::new(Vec::with_capacity(len)))
-        } else {
-            Err("Bitmap update is required, but the column is a reference and has no bitmap")?
-        }
-    };
-
-    if !*bitmap_update_required && c1.bitmap().is_some() {
-        if c1.column().is_owned() {
-            c1.bitmap_set(ColumnDataF::None)
-        } else {
-            Err("Bitmap should be None, but the column is a reference and has a bitmap")?
-        }
-    };
-
-    let dummy = |_: &mut T1, _: &mut bool, _: &T2, _: &bool, _: &T3, _: &bool| {};
-    let f: FType<T1, T2, T3, _, _, _> = FType::new_set(f, dummy, f_bitmap);
-
-    f_3_sized_sized_sized(
-        c1,
-        &ColumnDataIndex::None,
-        bitmap_update_required,
-        c2,
-        c2_index,
-        c3,
-        c3_index,
-        f,
-        &len,
-    )
+    f_3_sized_sized_sized(&mut c1_mut_column, &c2_read_column, &c3_read_column, f)
 }
+
+////////////////////////////////////////////////////////////////////////////
+
+pub fn insert_3_sized_sized_sized_unroll<'a, T1, T2, T3, F>(
+    c1: &'a mut ColumnWrapper,
+    input: &'a [InputTypes<'a>],
+    bitmap_update_required: &bool,
+    f: F,
+) -> Result<(), ErrorDesc>
+where
+    T1: 'static + Send + Sync,
+    T2: 'static + Send + Sync,
+    T3: 'static + Send + Sync,
+    F: Fn(&T2, &bool, &T3, &bool) -> (bool, T1),
+{
+    let mut c2_read_column = ReadColumn::<T2>::from_input(&input[0]);
+    let mut c3_read_column = ReadColumn::<T3>::from_input(&input[1]);
+
+    let len = std::cmp::max(c2_read_column.len(), c3_read_column.len());
+
+    c2_read_column.update_len_if_const(len);
+    c3_read_column.update_len_if_const(len);
+
+    assert_eq!(c2_read_column.len(), len);
+    assert_eq!(c3_read_column.len(), len);
+
+    let c1_insert_column = InsertColumn::<T1>::from_destination(c1, *bitmap_update_required, len);
+
+    let mut c1_mut_column = IndexedMutColumn::Insert(c1_insert_column);
+
+    let dummy = |_: &mut T1, _: &mut bool, (_, _, _, _): (&T2, &bool, &T3, &bool)| {
+        panic!("Dummy function called")
+    };
+    let f: FType3<T1, T2, T3, _, _> = FType3::new_assign(f, dummy);
+
+    f_3_sized_sized_sized(&mut c1_mut_column, &c2_read_column, &c3_read_column, f)
+}
+
 ////////////////////////////////////////////////////////////////////////////
 
 pub fn update_3_sized_sized_sized_unroll<'a, T1, T2, T3, F>(
     c1: &'a mut ColumnWrapper,
     c1_index: &ColumnDataIndex,
     input: &'a [InputTypes<'a>],
-    bitmap_update_required: &bool,
     f: F,
 ) -> Result<(), ErrorDesc>
 where
     T1: 'static + Send + Sync,
     T2: 'static + Send + Sync,
     T3: 'static + Send + Sync,
-    F: Fn(&mut T1, &mut bool, &T2, &bool, &T3, &bool),
+    F: Fn(&mut T1, &mut bool, (&T2, &bool, &T3, &bool)),
 {
-    let (c2, c2_index) = match &input[0] {
-        InputTypes::Ref(c, i) => (*c, *i),
-        InputTypes::Owned(c, i) => (c, i),
-    };
+    let mut c2_read_column = ReadColumn::<T2>::from_input(&input[0]);
+    let mut c3_read_column = ReadColumn::<T3>::from_input(&input[1]);
 
-    let (c3, c3_index) = match &input[1] {
-        InputTypes::Ref(c, i) => (*c, *i),
-        InputTypes::Owned(c, i) => (c, i),
-    };
+    let c1_update_column = UpdateColumn::from_destination(c1, c1_index);
 
-    let len = c1.column().data_len::<T1>()?;
+    let len = c1_update_column.len();
 
-    let c2_len = if c2_index.is_some() {
-        c2_index.downcast_ref()?.len()
-    } else {
-        c2.column().data_len::<T2>()?
-    };
+    c2_read_column.update_len_if_const(len);
+    c3_read_column.update_len_if_const(len);
 
-    let c3_len = if c3_index.is_some() {
-        c3_index.downcast_ref()?.len()
-    } else {
-        c3.column().data_len::<T3>()?
-    };
+    assert_eq!(len, c2_read_column.len());
+    assert_eq!(len, c3_read_column.len());
 
-    let len = std::cmp::max(len, c2_len);
-    let len = std::cmp::max(len, c3_len);
+    let mut c1_mut_column = IndexedMutColumn::Update(c1_update_column);
 
-    if *bitmap_update_required && !c1.bitmap().is_some() {
-        if c1.column().is_owned() {
-            c1.bitmap_set(ColumnDataF::new(Vec::with_capacity(len)))
-        } else {
-            Err("Bitmap update is required, but the column is a reference and has no bitmap")?
-        }
-    };
+    let dummy =
+        |_: &T2, _: &bool, _: &T3, _: &bool| -> (bool, T1) { panic!("dummy function called") };
 
-    let dummy = |_: &T2, _: &bool, _: &T3, _: &bool| -> T1 { panic!("dummy function called") };
-    let dummy_bool = |_: &bool, _: &bool| -> bool { panic!("dummy function called") };
+    let f: FType3<T1, T2, T3, _, _> = FType3::new_update(dummy, f);
 
-    let f: FType<T1, T2, T3, _, _, _> = FType::new_update(dummy, f, dummy_bool);
-
-    f_3_sized_sized_sized(
-        c1,
-        c1_index,
-        bitmap_update_required,
-        c2,
-        c2_index,
-        c3,
-        c3_index,
-        f,
-        &len,
-    )
+    f_3_sized_sized_sized(&mut c1_mut_column, &c2_read_column, &c3_read_column, f)
 }
 
 ////////////////////////////////////////////////////////////////////////////
@@ -601,13 +217,11 @@ where
 //////////////////    sized binary binary          /////////////////////////
 ////////////////////////////////////////////////////////////////////////////
 
-fn f_1_sized_binary_binary<'a, 'i, T1, T2, T3, U2, U3, FBool, F1, F2>(
-    c1: &'a mut ColumnWrapper,
-    c1_index: &ColumnDataIndex,
-    bitmap_update_required: &bool,
+fn f_1_sized_binary_binary<'a, 'i, T1, T2, T3, U2, U3, F1, F2>(
+    c1: &'a mut IndexedMutColumn<T1>,
     c2: U2,
     c3: U3,
-    f: FType<'a, T1, [u8], [u8], FBool, F1, F2>,
+    f: FType3<'a, T1, [u8], [u8], F1, F2>,
 ) -> Result<(), ErrorDesc>
 where
     'a: 'i,
@@ -620,589 +234,238 @@ where
     U3: IntoIterator<Item = (&'i [u8], &'i bool)>,
     U3::IntoIter: ExactSizeIterator,
     U3: Clone,
-    FBool: Fn(&bool, &bool) -> bool,
-    F1: Fn(&[u8], &bool, &[u8], &bool) -> T1,
-    F2: Fn(&mut T1, &mut bool, &[u8], &bool, &[u8], &bool),
+    F1: Fn(&[u8], &bool, &[u8], &bool) -> (bool, T1),
+    F2: Fn(&mut T1, &mut bool, (&[u8], &bool, &[u8], &bool)),
 {
-    let (c1, c1_bitmap) = c1.get_inner_mut();
-    let c2_iter = c2.clone().into_iter();
-    let c3_iter = c3.clone().into_iter();
-
-    assert_eq!(c2_iter.len(), c3_iter.len());
-
-    let is_set_operation = match f {
-        FType::Set(_) => true,
-        FType::Update(_) => false,
-        FType::_Phantom(_) => unreachable!(),
-    };
-
-    if is_set_operation && c1.is_owned() && c1.data_len::<T1>()? == 0 {
-        // We have to do an insert
-        // Requires an Owned column
-        // Bitmap should also be owned and empty
-        // Index should be empty
-
-        let c1_data: &mut Vec<T1> = c1.downcast_vec::<T1>()?;
-        let c1_bitmap = c1_bitmap.downcast_vec()?;
-
-        assert_eq!(c1_bitmap.len(), 0);
-        assert_eq!(c1_index.len(), None);
-
-        let (f_data, f_bitmap): (F1, FBool) = match f {
-            FType::Set((f1, f2)) => (f1, f2),
-            _ => Err("Cannnot update a non-slice")?,
-        };
-        match bitmap_update_required {
-            true => {
-                c1_data.extend(c2_iter.zip(c3_iter).map(
-                    |((c2_value, c2_bitmap), (c3_value, c3_bitmap))| {
-                        f_data(c2_value, c2_bitmap, c3_value, c3_bitmap)
-                    },
-                ));
-                c1_bitmap.extend(c2.into_iter().zip(c3.into_iter()).map(
-                    |((_c2_value, c2_bitmap), (_c3_value, c3_bitmap))| {
-                        f_bitmap(c2_bitmap, c3_bitmap)
-                    },
-                ));
-            }
-            false => c1_data.extend(c2_iter.zip(c3_iter).map(
-                |((c2_value, c2_bitmap), (c3_value, c3_bitmap))| {
-                    f_data(c2_value, c2_bitmap, c3_value, c3_bitmap)
-                },
-            )),
+    let iter = c2
+        .into_iter()
+        .zip(c3.into_iter())
+        .map(|((d2, b2), (d3, b3))| (d2, b2, d3, b3));
+    match (f, c1) {
+        (FType3::Assign(f), IndexedMutColumn::Insert(tgt)) => {
+            tgt.insert(iter, &|(a, b, c, d)| f(a, b, c, d))
         }
-    } else {
-        // Mut Borrow column
-        //- Should have correct storate reserved
-        //- Supports Set and Update operations
-
-        let c1_data = c1.downcast_mut::<T1>()?;
-        //let c1_bitmap = c1_bitmap.downcast_mut()?;
-
-        if *bitmap_update_required {
-            assert_eq!(c1_bitmap.len(), Some(c1_data.len()));
-        } else {
-            assert!(!c1_bitmap.is_some());
+        (FType3::Assign(f), IndexedMutColumn::Update(tgt)) => {
+            tgt.assign(iter, &|(a, b, c, d)| f(a, b, c, d))
         }
-
-        if c1_index.is_some() {
-            assert_eq!(c2_iter.len(), c1_index.len().unwrap());
-        } else {
-            assert_eq!(c1_data.len(), c2_iter.len());
+        (FType3::Update(f), IndexedMutColumn::Update(tgt)) => {
+            tgt.update(iter, |a, b, c| f(a, b, c))
         }
-
-        match f {
-            FType::Set((f_data, f_bitmap)) => match (c1_index.is_some(), bitmap_update_required) {
-                (true, true) => {
-                    let c1_bitmap = c1_bitmap.downcast_mut().unwrap();
-                    c1_index.downcast_ref()?.iter().zip(c2).zip(c3).for_each(
-                        |((i, (c2_value, c2_bitmap)), (c3_value, c3_bitmap))| {
-                            c1_data[*i] = f_data(c2_value, c2_bitmap, c3_value, c3_bitmap);
-                            c1_bitmap[*i] = f_bitmap(c2_bitmap, c3_bitmap);
-                        },
-                    )
-                }
-                (true, false) => c1_index.downcast_ref()?.iter().zip(c2).zip(c3).for_each(
-                    |((i, (c2_value, c2_bitmap)), (c3_value, c3_bitmap))| {
-                        c1_data[*i] = f_data(c2_value, c2_bitmap, c3_value, c3_bitmap);
-                    },
-                ),
-                (false, true) => {
-                    let c1_bitmap = c1_bitmap.downcast_mut().unwrap();
-                    c1_data
-                        .iter_mut()
-                        .zip(c1_bitmap.iter_mut())
-                        .zip(c2)
-                        .zip(c3)
-                        .for_each(
-                            |(
-                                ((c1_value, c1_bitmap), (c2_value, c2_bitmap)),
-                                (c3_value, c3_bitmap),
-                            )| {
-                                *c1_value = f_data(c2_value, c2_bitmap, c3_value, c3_bitmap);
-                                *c1_bitmap = f_bitmap(c2_bitmap, c3_bitmap);
-                            },
-                        )
-                }
-                (false, false) => c1_data.iter_mut().zip(c2).zip(c3).for_each(
-                    |((c1_value, (c2_value, c2_bitmap)), (c3_value, c3_bitmap))| {
-                        *c1_value = f_data(c2_value, c2_bitmap, c3_value, c3_bitmap);
-                    },
-                ),
-            },
-
-            FType::Update(f) => match (c1_index.is_some(), bitmap_update_required) {
-                (true, true) => {
-                    let c1_bitmap = c1_bitmap.downcast_mut().unwrap();
-                    c1_index.downcast_ref()?.iter().zip(c2).zip(c3).for_each(
-                        |((i, (c2_value, c2_bitmap)), (c3_value, c3_bitmap))| {
-                            f(
-                                c1_data.get_mut(*i).unwrap(),
-                                c1_bitmap.get_mut(*i).unwrap(),
-                                c2_value,
-                                c2_bitmap,
-                                c3_value,
-                                c3_bitmap,
-                            );
-                        },
-                    )
-                }
-                (true, false) => c1_index.downcast_ref()?.iter().zip(c2).zip(c3).for_each(
-                    |((i, (c2_value, c2_bitmap)), (c3_value, c3_bitmap))| {
-                        f(
-                            c1_data.get_mut(*i).unwrap(),
-                            &mut true,
-                            c2_value,
-                            c2_bitmap,
-                            c3_value,
-                            c3_bitmap,
-                        );
-                    },
-                ),
-                (false, true) => {
-                    let c1_bitmap = c1_bitmap.downcast_mut().unwrap();
-                    c1_data
-                        .iter_mut()
-                        .zip(c1_bitmap.iter_mut())
-                        .zip(c2)
-                        .zip(c3)
-                        .for_each(
-                            |(
-                                ((c1_value, c1_bitmap), (c2_value, c2_bitmap)),
-                                (c3_value, c3_bitmap),
-                            )| {
-                                f(
-                                    c1_value, c1_bitmap, c2_value, c2_bitmap, c3_value, c3_bitmap,
-                                );
-                            },
-                        )
-                }
-                (false, false) => c1_data.iter_mut().zip(c2).zip(c3).for_each(
-                    |((c1_value, (c2_value, c2_bitmap)), (c3_value, c3_bitmap))| {
-                        f(
-                            c1_value, &mut true, c2_value, c2_bitmap, c3_value, c3_bitmap,
-                        );
-                    },
-                ),
-            },
-            _ => Err("Function type should be either assign or update")?,
-        }
+        _ => panic!(),
     }
     Ok(())
 }
 
 ////////////////////////////////////////////////////////////////////////////
 
-fn f_2_sized_binary_binary<'a, 'i, T1, T2, T3, U3, FBool, F1, F2>(
-    c1: &'a mut ColumnWrapper,
-    c1_index: &ColumnDataIndex,
-    bitmap_update_required: &bool,
-    c: &'a ColumnWrapper,
-    c_index: &'a ColumnDataIndex,
+fn f_2_sized_binary_binary<'a, 'i, T1, T2, T3, U3, F1, F2>(
+    c1: &'a mut IndexedMutColumn<T1>,
+    c: &'a ReadBinaryColumn<'a, T2>,
     c3: U3,
-    f: FType<'a, T1, [u8], [u8], FBool, F1, F2>,
-    len: &usize,
+    f: FType3<'a, T1, [u8], [u8], F1, F2>,
 ) -> Result<(), ErrorDesc>
 where
     'a: 'i,
     T1: 'static + Send + Sync,
-    T2: 'static + Send + Sync,
+    T2: 'static + Send + Sync + AsBytes,
     T3: 'static + Send + Sync,
     U3: IntoIterator<Item = (&'i [u8], &'i bool)>,
     U3::IntoIter: ExactSizeIterator,
     U3: Clone,
-    FBool: Fn(&bool, &bool) -> bool,
-    F1: Fn(&[u8], &bool, &[u8], &bool) -> T1,
-    F2: Fn(&mut T1, &mut bool, &[u8], &bool, &[u8], &bool),
+    F1: Fn(&[u8], &bool, &[u8], &bool) -> (bool, T1),
+    F2: Fn(&mut T1, &mut bool, (&[u8], &bool, &[u8], &bool)),
 {
-    let c_is_const = c.column().is_const();
-    let (c, c_bitmap) = c.get_inner_ref();
-    let (c_datau8, c_start_pos, c_len, c_offset) = c.downcast_binary_ref::<T2>()?;
-
-    let c_const_val = || {
-        (0..*len).into_iter().map(|_| {
-            (
-                &c_datau8[c_start_pos[0] - c_offset..c_start_pos[0] - c_offset + c_len[0]],
-                &c_bitmap.downcast_ref().unwrap()[0],
-            )
-        })
-    };
-    let c_const_true = || {
-        (0..*len).into_iter().map(|_| {
-            (
-                &c_datau8[c_start_pos[0] - c_offset..c_start_pos[0] - c_offset + c_len[0]],
-                &true,
-            )
-        })
-    };
-    let c_index_bitmap = || {
-        c_index.downcast_ref().unwrap().iter().map(|i| {
-            (
-                &c_datau8[c_start_pos[*i] - c_offset..c_start_pos[*i] - c_offset + c_len[*i]],
-                &c_bitmap.downcast_ref().unwrap()[*i],
-            )
-        })
-    };
-    let c_index_nobitmap = || {
-        c_index.downcast_ref().unwrap().iter().map(|i| {
-            (
-                &c_datau8[c_start_pos[*i] - c_offset..c_start_pos[*i] - c_offset + c_len[*i]],
-                &true,
-            )
-        })
-    };
-    let c_noindex_bitmap = || {
-        c_start_pos
-            .iter()
-            .zip(c_len.iter())
-            .zip(c_bitmap.downcast_ref().unwrap().iter())
-            .map(|((s, l), b)| (&c_datau8[s - c_offset..s - c_offset + l], b))
-    };
-    let c_noindex_nobitmap = || {
-        c_start_pos
-            .iter()
-            .zip(c_len.iter())
-            .map(|(s, l)| (&c_datau8[s - c_offset..s - c_offset + l], &true))
-    };
-
-    if c_is_const {
-        match c_bitmap.is_some() {
-            true => f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _, _>(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c_const_val(),
-                c3,
-                f,
-            ),
-            false => f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _, _>(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c_const_true(),
-                c3,
-                f,
-            ),
+    match c {
+        ReadBinaryColumn::BitmapIndex(c) => {
+            f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _>(c1, c.as_binary_iter(), c3, f)
         }
-    } else {
-        match (c_index.is_some(), c_bitmap.is_some()) {
-            (true, true) => f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _, _>(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c_index_bitmap(),
-                c3,
-                f,
-            ),
-            (true, false) => f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _, _>(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c_index_nobitmap(),
-                c3,
-                f,
-            ),
-            (false, true) => f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _, _>(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c_noindex_bitmap(),
-                c3,
-                f,
-            ),
-            (false, false) => f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _, _>(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c_noindex_nobitmap(),
-                c3,
-                f,
-            ),
+        ReadBinaryColumn::BitmapNoIndex(c) => {
+            f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _>(c1, c.as_binary_iter(), c3, f)
+        }
+        ReadBinaryColumn::NoBitmapIndex(c) => {
+            f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _>(c1, c.as_binary_iter(), c3, f)
+        }
+        ReadBinaryColumn::NoBitmapNoIndex(c) => {
+            f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _>(c1, c.as_binary_iter(), c3, f)
+        }
+        ReadBinaryColumn::Const(c) => {
+            f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _>(c1, c.as_binary_iter(), c3, f)
+        }
+        ReadBinaryColumn::BitmapIndexOrig(c) => {
+            f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _>(c1, c.as_binary_iter(), c3, f)
+        }
+        ReadBinaryColumn::BitmapNoIndexOrig(c) => {
+            f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _>(c1, c.as_binary_iter(), c3, f)
+        }
+        ReadBinaryColumn::NoBitmapIndexOrig(c) => {
+            f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _>(c1, c.as_binary_iter(), c3, f)
+        }
+        ReadBinaryColumn::NoBitmapNoIndexOrig(c) => {
+            f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _>(c1, c.as_binary_iter(), c3, f)
+        }
+        ReadBinaryColumn::ConstOrig(c) => {
+            f_1_sized_binary_binary::<T1, T2, T3, _, _, _, _>(c1, c.as_binary_iter(), c3, f)
         }
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////
 
-fn f_3_sized_binary_binary<'a, 'i, T1, T2, T3, FBool, F1, F2>(
-    c1: &'a mut ColumnWrapper,
-    c1_index: &ColumnDataIndex,
-    bitmap_update_required: &bool,
-    c2: &'a ColumnWrapper,
-    c2_index: &'a ColumnDataIndex,
-    c: &'a ColumnWrapper,
-    c_index: &'a ColumnDataIndex,
-    f: FType<'a, T1, [u8], [u8], FBool, F1, F2>,
-    len: &usize,
+fn f_3_sized_binary_binary<'a, 'i, T1, T2, T3, F1, F2>(
+    c1: &'a mut IndexedMutColumn<T1>,
+    c2: &'a ReadBinaryColumn<'a, T2>,
+    c: &'a ReadBinaryColumn<'a, T3>,
+    f: FType3<'a, T1, [u8], [u8], F1, F2>,
 ) -> Result<(), ErrorDesc>
 where
     'a: 'i,
     T1: 'static + Send + Sync,
-    T2: 'static + Send + Sync,
-    T3: 'static + Send + Sync,
-    FBool: Fn(&bool, &bool) -> bool,
-    F1: Fn(&[u8], &bool, &[u8], &bool) -> T1,
-    F2: Fn(&mut T1, &mut bool, &[u8], &bool, &[u8], &bool),
+    T2: 'static + Send + Sync + AsBytes,
+    T3: 'static + Send + Sync + AsBytes,
+    F1: Fn(&[u8], &bool, &[u8], &bool) -> (bool, T1),
+    F2: Fn(&mut T1, &mut bool, (&[u8], &bool, &[u8], &bool)),
 {
-    let c_is_const = c.column().is_const();
-    let (c, c_bitmap) = c.get_inner_ref();
-    let (c_datau8, c_start_pos, c_len, c_offset) = c.downcast_binary_ref::<T3>()?;
-
-    let c_const_val = || {
-        (0..*len).into_iter().map(|_| {
-            (
-                &c_datau8[c_start_pos[0] - c_offset..c_start_pos[0] - c_offset + c_len[0]],
-                &c_bitmap.downcast_ref().unwrap()[0],
-            )
-        })
-    };
-    let c_const_true = || {
-        (0..*len).into_iter().map(|_| {
-            (
-                &c_datau8[c_start_pos[0] - c_offset..c_start_pos[0] - c_offset + c_len[0]],
-                &true,
-            )
-        })
-    };
-    let c_index_bitmap = || {
-        c_index.downcast_ref().unwrap().iter().map(|i| {
-            (
-                &c_datau8[c_start_pos[*i] - c_offset..c_start_pos[*i] - c_offset + c_len[*i]],
-                &c_bitmap.downcast_ref().unwrap()[*i],
-            )
-        })
-    };
-    let c_index_nobitmap = || {
-        c_index.downcast_ref().unwrap().iter().map(|i| {
-            (
-                &c_datau8[c_start_pos[*i] - c_offset..c_start_pos[*i] - c_offset + c_len[*i]],
-                &true,
-            )
-        })
-    };
-    let c_noindex_bitmap = || {
-        c_start_pos
-            .iter()
-            .zip(c_len.iter())
-            .zip(c_bitmap.downcast_ref().unwrap().iter())
-            .map(|((s, l), b)| (&c_datau8[s - c_offset..s - c_offset + l], b))
-    };
-    let c_noindex_nobitmap = || {
-        c_start_pos
-            .iter()
-            .zip(c_len.iter())
-            .map(|(s, l)| (&c_datau8[s - c_offset..s - c_offset + l], &true))
-    };
-
-    if c_is_const {
-        match c_bitmap.is_some() {
-            true => f_2_sized_binary_binary::<T1, T2, T3, _, _, _, _>(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c2,
-                c2_index,
-                c_const_val(),
-                f,
-                len,
-            ),
-            false => f_2_sized_binary_binary::<T1, T2, T3, _, _, _, _>(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c2,
-                c2_index,
-                c_const_true(),
-                f,
-                len,
-            ),
+    match c {
+        ReadBinaryColumn::BitmapIndex(c) => {
+            f_2_sized_binary_binary::<T1, T2, T3, _, _, _>(c1, c2, c.as_binary_iter(), f)
         }
-    } else {
-        match (c_index.is_some(), c_bitmap.is_some()) {
-            (true, true) => f_2_sized_binary_binary::<T1, T2, T3, _, _, _, _>(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c2,
-                c2_index,
-                c_index_bitmap(),
-                f,
-                len,
-            ),
-            (true, false) => f_2_sized_binary_binary::<T1, T2, T3, _, _, _, _>(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c2,
-                c2_index,
-                c_index_nobitmap(),
-                f,
-                len,
-            ),
-            (false, true) => f_2_sized_binary_binary::<T1, T2, T3, _, _, _, _>(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c2,
-                c2_index,
-                c_noindex_bitmap(),
-                f,
-                len,
-            ),
-            (false, false) => f_2_sized_binary_binary::<T1, T2, T3, _, _, _, _>(
-                c1,
-                c1_index,
-                bitmap_update_required,
-                c2,
-                c2_index,
-                c_noindex_nobitmap(),
-                f,
-                len,
-            ),
+        ReadBinaryColumn::BitmapNoIndex(c) => {
+            f_2_sized_binary_binary::<T1, T2, T3, _, _, _>(c1, c2, c.as_binary_iter(), f)
+        }
+        ReadBinaryColumn::NoBitmapIndex(c) => {
+            f_2_sized_binary_binary::<T1, T2, T3, _, _, _>(c1, c2, c.as_binary_iter(), f)
+        }
+        ReadBinaryColumn::NoBitmapNoIndex(c) => {
+            f_2_sized_binary_binary::<T1, T2, T3, _, _, _>(c1, c2, c.as_binary_iter(), f)
+        }
+        ReadBinaryColumn::Const(c) => {
+            f_2_sized_binary_binary::<T1, T2, T3, _, _, _>(c1, c2, c.as_binary_iter(), f)
+        }
+        ReadBinaryColumn::BitmapIndexOrig(c) => {
+            f_2_sized_binary_binary::<T1, T2, T3, _, _, _>(c1, c2, c.as_binary_iter(), f)
+        }
+        ReadBinaryColumn::BitmapNoIndexOrig(c) => {
+            f_2_sized_binary_binary::<T1, T2, T3, _, _, _>(c1, c2, c.as_binary_iter(), f)
+        }
+        ReadBinaryColumn::NoBitmapIndexOrig(c) => {
+            f_2_sized_binary_binary::<T1, T2, T3, _, _, _>(c1, c2, c.as_binary_iter(), f)
+        }
+        ReadBinaryColumn::NoBitmapNoIndexOrig(c) => {
+            f_2_sized_binary_binary::<T1, T2, T3, _, _, _>(c1, c2, c.as_binary_iter(), f)
+        }
+        ReadBinaryColumn::ConstOrig(c) => {
+            f_2_sized_binary_binary::<T1, T2, T3, _, _, _>(c1, c2, c.as_binary_iter(), f)
         }
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////
 
-pub fn set_3_sized_binary_binary_unroll<'a, T1, T2, T3, FBool, F>(
+pub fn assign_3_sized_binary_binary_unroll<'a, T1, T2, T3, F>(
+    c1: &'a mut ColumnWrapper,
+    input: &'a [InputTypes<'a>],
+    f: F,
+) -> Result<(), ErrorDesc>
+where
+    T1: 'static + Send + Sync,
+    T2: 'static + Send + Sync + AsBytes,
+    T3: 'static + Send + Sync + AsBytes,
+    F: Fn(&[u8], &bool, &[u8], &bool) -> (bool, T1),
+{
+    let mut c2_read_column = ReadBinaryColumn::<T2>::from_input(&input[0]);
+    let mut c3_read_column = ReadBinaryColumn::<T3>::from_input(&input[1]);
+
+    let c1_assign_column = UpdateColumn::<T1>::from_destination(c1, &ColumnDataIndex::None);
+    let len = c1_assign_column.len();
+
+    c2_read_column.update_len_if_const(len);
+    c3_read_column.update_len_if_const(len);
+
+    assert_eq!(len, c2_read_column.len());
+    assert_eq!(len, c3_read_column.len());
+
+    let mut c1_mut_column = IndexedMutColumn::Update(c1_assign_column);
+
+    let dummy = |_: &mut T1, _: &mut bool, (_, _, _, _): (&[u8], &bool, &[u8], &bool)| {
+        panic!("Dummy function called")
+    };
+    let f: FType3<T1, [u8], [u8], _, _> = FType3::new_assign(f, dummy);
+
+    f_3_sized_binary_binary(&mut c1_mut_column, &c2_read_column, &c3_read_column, f)
+}
+
+////////////////////////////////////////////////////////////////////////////
+
+pub fn insert_3_sized_binary_binary_unroll<'a, T1, T2, T3, F>(
     c1: &'a mut ColumnWrapper,
     input: &'a [InputTypes<'a>],
     bitmap_update_required: &bool,
     f: F,
-    f_bitmap: FBool,
 ) -> Result<(), ErrorDesc>
 where
     T1: 'static + Send + Sync,
-    T2: 'static + Send + Sync,
-    T3: 'static + Send + Sync,
-    FBool: Fn(&bool, &bool) -> bool,
-    F: Fn(&[u8], &bool, &[u8], &bool) -> T1,
+    T2: 'static + Send + Sync + AsBytes,
+    T3: 'static + Send + Sync + AsBytes,
+    F: Fn(&[u8], &bool, &[u8], &bool) -> (bool, T1),
 {
-    let (c2, c2_index) = match &input[0] {
-        InputTypes::Ref(c, i) => (*c, *i),
-        InputTypes::Owned(c, i) => (c, i),
+    let mut c2_read_column = ReadBinaryColumn::<T2>::from_input(&input[0]);
+    let mut c3_read_column = ReadBinaryColumn::<T3>::from_input(&input[1]);
+
+    let len = std::cmp::max(c2_read_column.len(), c3_read_column.len());
+
+    c2_read_column.update_len_if_const(len);
+    c3_read_column.update_len_if_const(len);
+
+    assert_eq!(c2_read_column.len(), len);
+    assert_eq!(c3_read_column.len(), len);
+
+    let c1_insert_column = InsertColumn::<T1>::from_destination(c1, *bitmap_update_required, len);
+
+    let mut c1_mut_column = IndexedMutColumn::Insert(c1_insert_column);
+
+    let dummy = |_: &mut T1, _: &mut bool, (_, _, _, _): (&[u8], &bool, &[u8], &bool)| {
+        panic!("Dummy function called")
     };
+    let f: FType3<T1, [u8], [u8], _, _> = FType3::new_assign(f, dummy);
 
-    let (c3, c3_index) = match &input[1] {
-        InputTypes::Ref(c, i) => (*c, *i),
-        InputTypes::Owned(c, i) => (c, i),
-    };
-
-    let len = c1.column().data_len::<T1>()?;
-
-    let c2_len = if c2_index.is_some() {
-        c2_index.downcast_ref()?.len()
-    } else {
-        c2.column().data_len::<T2>()?
-    };
-
-    let c3_len = if c3_index.is_some() {
-        c3_index.downcast_ref()?.len()
-    } else {
-        c3.column().data_len::<T2>()?
-    };
-
-    let len = std::cmp::max(len, c2_len);
-    let len = std::cmp::max(len, c3_len);
-
-    if *bitmap_update_required && !c1.bitmap().is_some() {
-        if c1.column().is_owned() {
-            c1.bitmap_set(ColumnDataF::new(Vec::with_capacity(len)))
-        } else {
-            Err("Bitmap update is required, but the column is a reference and has no bitmap")?
-        }
-    };
-
-    if !*bitmap_update_required && c1.bitmap().is_some() {
-        if c1.column().is_owned() {
-            c1.bitmap_set(ColumnDataF::None)
-        } else {
-            Err("Bitmap should be None, but the column is a reference and has a bitmap")?
-        }
-    };
-    let dummy = |_: &mut T1, _: &mut bool, _: &[u8], _: &bool, _: &[u8], _: &bool| {};
-    let f: FType<T1, [u8], [u8], _, _, _> = FType::new_set(f, dummy, f_bitmap);
-
-    f_3_sized_binary_binary::<T1, T2, T3, _, _, _>(
-        c1,
-        &ColumnDataIndex::None,
-        bitmap_update_required,
-        c2,
-        c2_index,
-        c3,
-        c3_index,
-        f,
-        &len,
-    )
+    f_3_sized_binary_binary(&mut c1_mut_column, &c2_read_column, &c3_read_column, f)
 }
-///////////////////////////////////////////////////////////////////////////
+
 ////////////////////////////////////////////////////////////////////////////
 
 pub fn update_3_sized_binary_binary_unroll<'a, T1, T2, T3, F>(
     c1: &'a mut ColumnWrapper,
     c1_index: &ColumnDataIndex,
     input: &'a [InputTypes<'a>],
-    bitmap_update_required: &bool,
     f: F,
 ) -> Result<(), ErrorDesc>
 where
     T1: 'static + Send + Sync,
-    T2: 'static + Send + Sync,
-    T3: 'static + Send + Sync,
-    F: Fn(&mut T1, &mut bool, &[u8], &bool, &[u8], &bool),
+    T2: 'static + Send + Sync + AsBytes,
+    T3: 'static + Send + Sync + AsBytes,
+    F: Fn(&mut T1, &mut bool, (&[u8], &bool, &[u8], &bool)),
 {
-    let (c2, c2_index) = match &input[0] {
-        InputTypes::Ref(c, i) => (*c, *i),
-        InputTypes::Owned(c, i) => (c, i),
-    };
+    let mut c2_read_column = ReadBinaryColumn::<T2>::from_input(&input[0]);
+    let mut c3_read_column = ReadBinaryColumn::<T3>::from_input(&input[1]);
 
-    let (c3, c3_index) = match &input[1] {
-        InputTypes::Ref(c, i) => (*c, *i),
-        InputTypes::Owned(c, i) => (c, i),
-    };
+    let c1_update_column = UpdateColumn::from_destination(c1, c1_index);
 
-    let len = c1.column().data_len::<T1>()?;
+    let len = c1_update_column.len();
 
-    let c2_len = if c2_index.is_some() {
-        c2_index.downcast_ref()?.len()
-    } else {
-        c2.column().data_len::<T2>()?
-    };
+    c2_read_column.update_len_if_const(len);
+    c3_read_column.update_len_if_const(len);
 
-    let c3_len = if c3_index.is_some() {
-        c3_index.downcast_ref()?.len()
-    } else {
-        c3.column().data_len::<T3>()?
-    };
+    assert_eq!(len, c2_read_column.len());
+    assert_eq!(len, c3_read_column.len());
 
-    let len = std::cmp::max(len, c2_len);
-    let len = std::cmp::max(len, c3_len);
+    let mut c1_mut_column = IndexedMutColumn::Update(c1_update_column);
 
-    if *bitmap_update_required && !c1.bitmap().is_some() {
-        if c1.column().is_owned() {
-            c1.bitmap_set(ColumnDataF::new(Vec::with_capacity(len)))
-        } else {
-            Err("Bitmap update is required, but the column is a reference and has no bitmap")?
-        }
-    };
+    let dummy =
+        |_: &[u8], _: &bool, _: &[u8], _: &bool| -> (bool, T1) { panic!("dummy function called") };
 
-    let dummy = |_: &[u8], _: &bool, _: &[u8], _: &bool| -> T1 { panic!("dummy function called") };
-    let dummy_bool = |_: &bool, _: &bool| -> bool { panic!("dummy function called") };
+    let f: FType3<T1, [u8], [u8], _, _> = FType3::new_update(dummy, f);
 
-    let f: FType<T1, [u8], [u8], _, _, _> = FType::new_update(dummy, f, dummy_bool);
-
-    f_3_sized_binary_binary::<T1, T2, T3, _, _, _>(
-        c1,
-        c1_index,
-        bitmap_update_required,
-        c2,
-        c2_index,
-        c3,
-        c3_index,
-        f,
-        &len,
-    )
+    f_3_sized_binary_binary(&mut c1_mut_column, &c2_read_column, &c3_read_column, f)
 }
 
 ////////////////////////////////////////////////////////////////////////////

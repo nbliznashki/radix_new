@@ -24,6 +24,7 @@ impl Dictionary {
         crate::c_lt::load_op_dict(&mut op);
         crate::c_lteq::load_op_dict(&mut op);
         crate::c_sum::load_op_dict(&mut op);
+        crate::c_max::load_op_dict(&mut op);
         crate::c_count::load_op_dict(&mut op);
 
         op.iter().for_each(|(signature, op)| {

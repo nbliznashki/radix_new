@@ -244,13 +244,13 @@ mod tests {
         ];
 
         t.push_index(c3_index, &[0]).unwrap();
-
-        t.op(&dict, "==", &2, &[1, 0]).unwrap();
+        let e = TableExpression::new("==", &[0, 1]);
+        t.add_expression_as_new_column(&dict, &e);
 
         let expected_result = vec![
             "true", "(null)", "true", "false", "true", "false", "true", "false", "(null)",
         ];
-        let result = t.materialize_as_string(&dict, &2).unwrap();
+        let result = t.materialize_as_string(&dict, &3).unwrap();
         assert_eq!(result, expected_result);
 
         //t.print(&dict).unwrap();
@@ -313,12 +313,13 @@ mod tests {
 
         t.push_index(c2_index, &[1]).unwrap();
 
-        t.op(&dict, "==", &2, &[1, 0]).unwrap();
+        let e = TableExpression::new("==", &[0, 1]);
+        t.add_expression_as_new_column(&dict, &e);
 
         let expected_result = vec![
             "true", "(null)", "true", "false", "true", "false", "true", "false", "(null)",
         ];
-        let result = t.materialize_as_string(&dict, &2).unwrap();
+        let result = t.materialize_as_string(&dict, &3).unwrap();
         assert_eq!(result, expected_result);
     }
     #[test]
@@ -327,11 +328,11 @@ mod tests {
         let keep_all = vec![true, true, true, true, true];
         let keep_some = vec![false, true, false, true, false];
 
-        let mut index_ref = ColumnDataIndex::new_from_slice_mut(index.as_mut_slice());
+        let mut index_ref = ColumnDataIndex::new(index.clone());
         filter(&mut index_ref, &keep_all, &ColumnDataF::None, &None).unwrap();
         assert_eq!(index_ref.downcast_vec().unwrap(), &mut vec![1, 2, 3, 4, 5]);
 
-        let mut index_ref = ColumnDataIndex::new_from_slice_mut(index.as_mut_slice());
+        let mut index_ref = ColumnDataIndex::new(index.clone());
         filter(&mut index_ref, &keep_some, &ColumnDataF::None, &None).unwrap();
         assert_eq!(index_ref.downcast_vec().unwrap(), &mut vec![2, 4]);
 
@@ -395,11 +396,9 @@ mod tests {
         ];
 
         t.push_index(c2_index, &[1]).unwrap();
-        t.print(&dict).unwrap();
         let e = TableExpression::new("==", &[0, 1]);
 
         t.filter(&dict, &e).unwrap();
-        t.print(&dict).unwrap();
         let expected_result = vec!["1A", "3A", "5A", "7A"];
 
         let result = t.materialize_as_string(&dict, &1).unwrap();
@@ -436,7 +435,6 @@ mod tests {
         ];
 
         t.push_index(c3_index, &[0]).unwrap();
-        t.print(&dict).unwrap();
 
         let mut e = TableExpression::new("<", &[500, 1000]);
         e.expand_node(500, "+", &[0, 500]).unwrap();
@@ -448,7 +446,6 @@ mod tests {
         e.expand_node_as_const(1000, &mut Some(const_val)).unwrap();
 
         t.add_expression_as_new_column(&dict, &e);
-        t.print(&dict).unwrap();
 
         let expected_result = vec![
             "true", "(null)", "true", "true", "(null)", "false", "false", "false", "(null)",
@@ -459,10 +456,11 @@ mod tests {
 
     #[test]
     fn columns_hash() {
-        /*rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build_global()
-        .unwrap();*/
+        /*
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build_global()
+            .unwrap();*/
         let dict = Dictionary::new();
 
         let mut t: Table = Table::new(vec![2, 2, 2, 2, 1]);
@@ -563,7 +561,6 @@ mod tests {
         ];
 
         t.push_index(c2_index, &[1]).unwrap();
-        t.print(&dict).unwrap();
         let h = t.build_hash(&dict, &[1]);
         let h1: Vec<_> = h.iter().flatten().map(|i| *i & 3).collect();
         t.push(&dict, &h1).unwrap();
@@ -691,8 +688,6 @@ mod tests {
 
         assert_eq!(h1, vec![0, 0, 1, 1, 0, 0, 1, 1, 1]);
         assert_eq!(h2, vec![0, 1, 2, 2, 0, 1, 2, 3, 3]);
-
-        t.print(&dict).unwrap();
     }
     #[test]
     fn columns_group_expression() {
@@ -750,8 +745,6 @@ mod tests {
         let h2_num_groups: Vec<_> = h2_num_groups.into_iter().flatten().collect();
         t.push(&dict, &h2_num_groups).unwrap();
 
-        t.print(&dict).unwrap();
-
         let mut e = TableExpression::new("SUM", &[1]);
         e.partition_by.push(ExpressionInput::Column(0));
         //e.expand_node(500, "+", &[0, 500]).unwrap();
@@ -763,67 +756,5 @@ mod tests {
         t.add_expression_as_new_column(&dict, &e);
         t.print(&dict).unwrap();
         println!("{:?}", t.indexes);
-    }
-
-    fn trait_iter() {
-        trait ForEach<T, F> {
-            fn apply(&mut self, f: F)
-            where
-                T: Sized,
-                F: FnMut(&mut T);
-        }
-
-        pub struct A {
-            pub data: Vec<u64>,
-        }
-
-        pub struct B {
-            pub data: Vec<u64>,
-            pub index: Vec<usize>,
-        }
-
-        impl<F> ForEach<u64, F> for A {
-            fn apply(&mut self, f: F)
-            where
-                F: FnMut(&mut u64),
-            {
-                #[inline]
-                fn call<T>(mut f: impl FnMut(T)) -> impl FnMut((), T) {
-                    move |(), item| f(item)
-                }
-
-                self.data.iter_mut().fold((), call(f));
-            }
-        }
-
-        impl<F> ForEach<u64, F> for B {
-            fn apply(&mut self, mut f: F)
-            where
-                F: FnMut(&mut u64),
-            {
-                #[inline]
-                fn call<T>(mut f: impl FnMut(T)) -> impl FnMut((), T) {
-                    move |(), item| f(item)
-                }
-                let (index, data) = (&self.index, &mut self.data);
-                index.iter().for_each(|i| f(&mut data[*i]))
-            }
-        }
-
-        let mut a = A {
-            data: vec![1, 2, 3, 4],
-        };
-
-        a.apply(|x| *x += 1);
-
-        let mut b = B {
-            data: vec![1, 2, 3, 4],
-            index: vec![0, 0, 1],
-        };
-
-        b.apply(|x| *x += a.data[*x as usize]);
-
-        println!("{:?}", a.data);
-        println!("{:?}", b.data);
     }
 }

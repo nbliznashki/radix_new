@@ -39,7 +39,8 @@ impl<'a> ColumnWrapper<'a> {
         (&self.column, &self.bitmap)
     }
 
-    pub fn get_inner_mut(&mut self) -> (&mut ColumnData<'a>, &mut ColumnDataF<'a, bool>) {
+    pub fn get_inner_mut(&mut self) -> (&mut ColumnData<'a>, &mut ColumnDataF<'a, bool>)
+where {
         (&mut self.column, &mut self.bitmap)
     }
 

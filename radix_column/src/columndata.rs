@@ -379,7 +379,35 @@ impl<'a> ColumnData<'a> {
             _ => Err("Operation not supported for columns which are not BinaryOwned")?,
         }
     }
-
+    pub fn truncate<T: 'static + Send + Sync>(&mut self) -> Result<(), ErrorDesc> {
+        match self {
+            ColumnData::Owned(c) => c.downcast_vec::<T>()?.truncate(0),
+            ColumnData::SliceMut(_) => Err(format!("Truncate failed for ColumnData::SliceRef",))?,
+            ColumnData::Slice(_) => Err(format!("Truncate failed for  ColumnData::Slice",))?,
+            ColumnData::Const(c) => c.downcast_vec::<T>()?.truncate(0),
+            ColumnData::BinaryOwned(c) => {
+                let (d, s, l, o) = c.downcast_binary_vec::<T>()?;
+                d.truncate(0);
+                s.truncate(0);
+                l.truncate(0);
+                *o = 0;
+            }
+            ColumnData::BinarySliceMut(_) => {
+                Err(format!("Truncate failed for  ColumnData::BinarySliceMut",))?
+            }
+            ColumnData::BinarySlice(_) => {
+                Err(format!("Truncate failed for ColumnData::BinarySlice",))?
+            }
+            ColumnData::BinaryConst(c) => {
+                let (d, s, l, o) = c.downcast_binary_vec::<T>()?;
+                d.truncate(0);
+                s.truncate(0);
+                l.truncate(0);
+                *o = 0;
+            }
+        };
+        Ok(())
+    }
     pub unsafe fn assume_init<T: 'static + Send + Sync>(self) -> Result<Self, ErrorDesc> {
         match self {
             ColumnData::Owned(c) => c.assume_init::<T>().map(|c| ColumnData::Owned(c)),
@@ -479,7 +507,6 @@ pub enum ColumnDataIndex<'a> {
     //None,
     Owned(Vec<usize>),
     Slice(&'a [usize]),
-    SliceMut(&'a mut [usize]),
     None,
 }
 
@@ -497,8 +524,15 @@ impl<'a> ColumnDataIndex<'a> {
             //ColumnDataF::None => None,
             ColumnDataIndex::Owned(v) => Some(v.len()),
             ColumnDataIndex::Slice(s) => Some(s.len()),
-            ColumnDataIndex::SliceMut(s) => Some(s.len()),
             ColumnDataIndex::None => None,
+        }
+    }
+
+    pub fn as_ref<'b>(&'b self) -> Result<&'b [usize], ErrorDesc> {
+        match &self {
+            ColumnDataIndex::Owned(v) => Ok(v.as_slice()),
+            ColumnDataIndex::Slice(s) => Ok(s),
+            ColumnDataIndex::None => Err("ColumnDataF is None and cannot be downcasted as a ref")?,
         }
     }
 
@@ -506,7 +540,6 @@ impl<'a> ColumnDataIndex<'a> {
         match &self {
             ColumnDataIndex::Owned(v) => Ok(v.as_slice()),
             ColumnDataIndex::Slice(s) => Ok(s),
-            ColumnDataIndex::SliceMut(s) => Ok(s),
             ColumnDataIndex::None => Err("ColumnDataF is None and cannot be downcasted as a ref")?,
         }
     }
@@ -515,7 +548,6 @@ impl<'a> ColumnDataIndex<'a> {
         match self {
             ColumnDataIndex::Owned(v) => Ok(v.as_mut_slice()),
             ColumnDataIndex::Slice(_) => Err("")?,
-            ColumnDataIndex::SliceMut(s) => Ok(*s),
             ColumnDataIndex::None => {
                 Err("ColumnDataF is None and cannot be downcasted as a mut ref")?
             }
@@ -529,7 +561,6 @@ impl<'a> ColumnDataIndex<'a> {
         match self {
             ColumnDataIndex::Owned(v) => Ok(v),
             ColumnDataIndex::Slice(_) => Err("")?,
-            ColumnDataIndex::SliceMut(_) => Err("")?,
             ColumnDataIndex::None => {
                 Err("ColumnDataF is None and cannot be downcasted as a mut Vec")?
             }
@@ -541,14 +572,10 @@ impl<'a> ColumnDataIndex<'a> {
     pub fn new_from_slice(data: &'a [usize]) -> Self {
         ColumnDataIndex::Slice(data)
     }
-    pub fn new_from_slice_mut(data: &'a mut [usize]) -> Self {
-        ColumnDataIndex::SliceMut(data)
-    }
     pub fn is_owned(&self) -> bool {
         match self {
             ColumnDataIndex::Owned(_) => true,
             ColumnDataIndex::Slice(_) => false,
-            ColumnDataIndex::SliceMut(_) => false,
             ColumnDataIndex::None => false,
         }
     }
