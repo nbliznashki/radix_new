@@ -203,7 +203,7 @@ impl<'a, T: Send + Sync + 'static>
                     len,
                     offset,
                     bitmap: bitmap.downcast_ref().unwrap(),
-                    index: index.downcast_ref().unwrap(),
+                    index: index.as_ref().unwrap(),
                 }),
                 (true, false) => Self::BitmapNoIndex(IRCBinaryBitmapNoIndex {
                     data,
@@ -217,7 +217,7 @@ impl<'a, T: Send + Sync + 'static>
                     start_pos,
                     len,
                     offset,
-                    index: index.downcast_ref().unwrap(),
+                    index: index.as_ref().unwrap(),
                 }),
                 (false, false) => Self::NoBitmapNoIndex(IRCBinaryNoBitmapNoIndex {
                     data,
@@ -340,6 +340,48 @@ impl<'a, T> ReadBinaryColumn<'a, T> {
             Self::ConstOrig(c) => c.target_len = new_len,
         }
     }
+
+    #[inline]
+    pub fn for_each<F>(&self, f: F)
+    where
+        F: FnMut((&[u8], &bool)),
+        T: AsBytes,
+    {
+        match self {
+            Self::BitmapIndex(c) => c.as_binary_iter().for_each(f),
+            Self::BitmapNoIndex(c) => c.as_binary_iter().for_each(f),
+            Self::NoBitmapIndex(c) => c.as_binary_iter().for_each(f),
+            Self::NoBitmapNoIndex(c) => c.as_binary_iter().for_each(f),
+            Self::Const(c) => c.as_binary_iter().for_each(f),
+            Self::BitmapIndexOrig(c) => c.as_binary_iter().for_each(f),
+            Self::BitmapNoIndexOrig(c) => c.as_binary_iter().for_each(f),
+            Self::NoBitmapIndexOrig(c) => c.as_binary_iter().for_each(f),
+            Self::NoBitmapNoIndexOrig(c) => c.as_binary_iter().for_each(f),
+            Self::ConstOrig(c) => c.as_binary_iter().for_each(f),
+        }
+    }
+
+    #[inline]
+    pub fn zip_and_for_each<I, F>(&self, iter: I, f: F)
+    where
+        I: ExactSizeIterator,
+        F: FnMut(((&[u8], &bool), <I as Iterator>::Item)),
+        T: AsBytes,
+    {
+        match self {
+            Self::BitmapIndex(c) => c.as_binary_iter().zip(iter).for_each(f),
+            Self::BitmapNoIndex(c) => c.as_binary_iter().zip(iter).for_each(f),
+            Self::NoBitmapIndex(c) => c.as_binary_iter().zip(iter).for_each(f),
+            Self::NoBitmapNoIndex(c) => c.as_binary_iter().zip(iter).for_each(f),
+            Self::Const(c) => c.as_binary_iter().zip(iter).for_each(f),
+            Self::BitmapIndexOrig(c) => c.as_binary_iter().zip(iter).for_each(f),
+            Self::BitmapNoIndexOrig(c) => c.as_binary_iter().zip(iter).for_each(f),
+            Self::NoBitmapIndexOrig(c) => c.as_binary_iter().zip(iter).for_each(f),
+            Self::NoBitmapNoIndexOrig(c) => c.as_binary_iter().zip(iter).for_each(f),
+            Self::ConstOrig(c) => c.as_binary_iter().zip(iter).for_each(f),
+        }
+    }
+
     pub fn from_input(c: &'a InputTypes) -> Self
     where
         T: 'static + Send + Sync,

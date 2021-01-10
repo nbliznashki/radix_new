@@ -125,7 +125,7 @@ where
 
     f_2_sized_sized(&mut c1_mut_column, &c2_read_column, f)
 }
-
+////////////////////////////////////////////////////////
 pub fn update_2_sized_sized_unroll<'a, 'b, T1, T2, F>(
     c1: &'a mut ColumnWrapper<'b>,
     c1_index: &'a ColumnDataIndex,
@@ -259,7 +259,31 @@ where
 
     f_2_sized_binary::<T1, T2, _, _>(&mut c1_mut_column, &c2_read_column, f)
 }
+////////////////////////////////////////////////////////
+pub fn update_2_sized_binary_unroll<'a, 'b, T1, T2, F>(
+    c1: &'a mut ColumnWrapper<'b>,
+    c1_index: &'a ColumnDataIndex,
+    input: &'a [InputTypes<'a>],
+    f: F,
+) -> Result<(), ErrorDesc>
+where
+    T1: 'static + Send + Sync,
+    T2: 'static + Send + Sync + AsBytes,
+    F: Fn(&mut T1, &mut bool, (&[u8], &bool)),
+{
+    let mut c2_read_column = ReadBinaryColumn::<T2>::from_input(&input[0]);
 
+    let c1_update_column = UpdateColumn::from_destination(c1, c1_index);
+    c2_read_column.update_len_if_const(c1_update_column.len());
+
+    assert_eq!(c2_read_column.len(), c1_update_column.len());
+
+    let dummy = |_: &[u8], _: &bool| -> (bool, T1) { panic!("dummy function called") };
+    let f: FType2<T1, [u8], _, _> = FType2::new_update(dummy, f);
+    let mut c1 = IndexedMutColumn::Update(c1_update_column);
+    f_2_sized_binary(&mut c1, &c2_read_column, f)
+}
+////////////////////////////////////////////////////////
 pub fn insert_2_sized_binary_unroll<'a, T1, T2, F>(
     c1: &'a mut ColumnWrapper,
     input: &'a [InputTypes<'a>],

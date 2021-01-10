@@ -1,3 +1,5 @@
+use std::collections::binary_heap::Iter;
+
 use radix_column::{AsBytes, ColumnData, ColumnDataF, ColumnDataIndex};
 
 use crate::InputTypes;
@@ -186,7 +188,7 @@ impl<'a, T: Send + Sync + 'static>
                 (true, true) => Self::BitmapIndex(IRCBitmapIndex {
                     data: &data,
                     bitmap: bitmap.downcast_ref().unwrap(),
-                    index: index.downcast_ref().unwrap(),
+                    index: index.as_ref().unwrap(),
                 }),
                 (true, false) => Self::BitmapNoIndex(IRCBitmapNoIndex {
                     data: &data,
@@ -194,7 +196,7 @@ impl<'a, T: Send + Sync + 'static>
                 }),
                 (false, true) => Self::NoBitmapIndex(IRCNoBitmapIndex {
                     data: &data,
-                    index: index.downcast_ref().unwrap(),
+                    index: index.as_ref().unwrap(),
                 }),
                 (false, false) => Self::NoBitmapNoIndex(IRCNoBitmapNoIndex { data: &data }),
             }
@@ -242,5 +244,32 @@ impl<'a, T> ReadColumn<'a, T> {
         let (c_col, c_bitmap) = c.get_inner_ref();
         let c_read_column: ReadColumn<T> = ReadColumn::from((c_col, c_bitmap, c_index, 1));
         c_read_column
+    }
+    #[inline]
+    pub fn for_each<F>(&self, f: F)
+    where
+        F: FnMut((&T, &bool)),
+    {
+        match self {
+            Self::BitmapIndex(c) => c.as_iter().for_each(f),
+            Self::BitmapNoIndex(c) => c.as_iter().for_each(f),
+            Self::NoBitmapIndex(c) => c.as_iter().for_each(f),
+            Self::NoBitmapNoIndex(c) => c.as_iter().for_each(f),
+            Self::Const(c) => c.as_iter().for_each(f),
+        }
+    }
+    #[inline]
+    pub fn zip_and_for_each<I, F>(&self, iter: I, f: F)
+    where
+        I: ExactSizeIterator,
+        F: FnMut(((&T, &bool), <I as Iterator>::Item)),
+    {
+        match self {
+            Self::BitmapIndex(c) => c.as_iter().zip(iter).for_each(f),
+            Self::BitmapNoIndex(c) => c.as_iter().zip(iter).for_each(f),
+            Self::NoBitmapIndex(c) => c.as_iter().zip(iter).for_each(f),
+            Self::NoBitmapNoIndex(c) => c.as_iter().zip(iter).for_each(f),
+            Self::Const(c) => c.as_iter().zip(iter).for_each(f),
+        }
     }
 }

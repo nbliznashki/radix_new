@@ -30,13 +30,6 @@ macro_rules! operation_impl {
             {
                 type T=$tr;
 
-                let (c2, c2_index) = match &input[0] {
-                    InputTypes::Ref(c, i) => (*c, *i),
-                    InputTypes::Owned(c, i) => (c, i),
-                };
-
-
-
                 let (c3, c3_index) = match &input[1] {
                     InputTypes::Ref(c, i) => (*c, *i),
                     InputTypes::Owned(c, i) => (c, i),
@@ -56,10 +49,6 @@ macro_rules! operation_impl {
                 assert!(c4.column().is_const());
                 assert!(c1.column().is_owned());
 
-                let (c2_data, c2_bitmap)=(c2.column(), c2.bitmap());
-                let c2_data=c2_data.downcast_ref::<T>()?;
-
-
                 let group_ids=c3.column().downcast_ref::<usize>()?;
                 let number_of_groups=c4.column().downcast_ref::<usize>()?[0];
 
@@ -68,36 +57,8 @@ macro_rules! operation_impl {
                 c1_data.reserve(number_of_groups);
                 c1_data.extend((0..number_of_groups).into_iter().map(|_| 0));
 
-                match (c2_index.is_some(), c2_bitmap.is_some()){
-                    (true, true)=>{
-                        let c2_index=c2_index.downcast_ref()?;
-                        let c2_bitmap=c2_bitmap.downcast_ref()?;
-                        assert_eq!(group_ids.len(),c2_index.len());
-                        c2_index.iter().zip(group_ids.iter()).for_each(|(index, group_id)|
-                            c1_data[*group_id]+=c2_data[*index]&(!c2_bitmap[*index] as T).wrapping_sub(1)
-                        );
-                    }
-                    (true, false)=>{
-                        let c2_index=c2_index.downcast_ref()?;
-                        assert_eq!(group_ids.len(),c2_index.len());
-                        c2_index.iter().zip(group_ids.iter()).for_each(|(index, group_id)|
-                            c1_data[*group_id]+=c2_data[*index]
-                        );
-                    }
-                    (false, true)=>{
-                        assert_eq!(group_ids.len(),c2_data.len());
-                        let c2_bitmap=c2_bitmap.downcast_ref()?;
-                        c2_data.iter().zip(c2_bitmap).zip(group_ids).for_each(|((data, bitmap), group_id)|
-                            c1_data[*group_id]+=*data&(*bitmap as T).wrapping_sub(1)
-                        );
-                    }
-                    (false, false)=>{
-                        assert_eq!(group_ids.len(),c2_data.len());
-                        c2_data.iter().zip(group_ids).for_each(|(data, group_id)|
-                            c1_data[*group_id]+=*data
-                        );}
-
-                };
+                let c2=ReadColumn::<T>::from_input(&input[0]);
+                c2.zip_and_for_each(group_ids.iter(), |((value,bitmap),group_id)| c1_data[*group_id]+=*value & (*bitmap as T).wrapping_sub(1));
                 Ok(())
             }
         }

@@ -162,7 +162,7 @@ impl<'a, 'b, T: Send + Sync + 'static>
             (true, true) => Self::BitmapIndex(IUCBitmapIndex {
                 data: data,
                 bitmap: bitmap.downcast_mut().unwrap(),
-                index: index.downcast_ref().unwrap(),
+                index: index.as_ref().unwrap(),
             }),
             (true, false) => Self::BitmapNoIndex(IUCBitmapNoIndex {
                 data: data,
@@ -170,7 +170,7 @@ impl<'a, 'b, T: Send + Sync + 'static>
             }),
             (false, true) => Self::NoBitmapIndex(IUCNoBitmapIndex {
                 data: data,
-                index: index.downcast_ref().unwrap(),
+                index: index.as_ref().unwrap(),
             }),
             (false, false) => Self::NoBitmapNoIndex(IUCNoBitmapNoIndex { data: data }),
         }

@@ -456,10 +456,11 @@ mod tests {
 
     #[test]
     fn columns_hash() {
-        /*rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build_global()
-        .unwrap();*/
+        /*
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build_global()
+            .unwrap();*/
         let dict = Dictionary::new();
 
         let mut t: Table = Table::new(vec![2, 2, 2, 2, 1]);

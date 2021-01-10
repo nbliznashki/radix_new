@@ -528,6 +528,14 @@ impl<'a> ColumnDataIndex<'a> {
         }
     }
 
+    pub fn as_ref<'b>(&'b self) -> Result<&'b [usize], ErrorDesc> {
+        match &self {
+            ColumnDataIndex::Owned(v) => Ok(v.as_slice()),
+            ColumnDataIndex::Slice(s) => Ok(s),
+            ColumnDataIndex::None => Err("ColumnDataF is None and cannot be downcasted as a ref")?,
+        }
+    }
+
     pub fn downcast_ref<'b>(&'b self) -> Result<&'b [usize], ErrorDesc> {
         match &self {
             ColumnDataIndex::Owned(v) => Ok(v.as_slice()),

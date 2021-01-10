@@ -30,13 +30,6 @@ macro_rules! operation_impl_sized {
             {
                 type T=$tr;
 
-                let (c2, c2_index) = match &input[0] {
-                    InputTypes::Ref(c, i) => (*c, *i),
-                    InputTypes::Owned(c, i) => (c, i),
-                };
-
-
-
                 let (c3, c3_index) = match &input[1] {
                     InputTypes::Ref(c, i) => (*c, *i),
                     InputTypes::Owned(c, i) => (c, i),
@@ -56,8 +49,6 @@ macro_rules! operation_impl_sized {
                 assert!(c4.column().is_const());
                 assert!(c1.column().is_owned());
 
-                let (c2_data, c2_bitmap)=(c2.column(), c2.bitmap());
-                let c2_data=c2_data.downcast_ref::<T>()?;
 
 
                 let group_ids=c3.column().downcast_ref::<usize>()?;
@@ -72,80 +63,20 @@ macro_rules! operation_impl_sized {
                 c1_data.extend((0..number_of_groups).into_iter().map(|_| 0));
                 c1_bitmap.extend((0..number_of_groups).into_iter().map(|_| false));
 
-                match (c2_index.is_some(), c2_bitmap.is_some()){
-                    (true, true)=>{
-                        let c2_index=c2_index.downcast_ref()?;
-                        let c2_bitmap=c2_bitmap.downcast_ref()?;
-                        assert_eq!(group_ids.len(),c2_index.len());
-                        c2_index.iter().zip(group_ids.iter()).for_each(|(index, group_id)|
-                            {
-                                let a=&mut c1_data[*group_id];
-                                let a_bitmap=&mut c1_bitmap[*group_id];
-                                let b=c2_data[*index];
-                                let b_bitmap=c2_bitmap[*index];
+                let c2=ReadColumn::<T>::from_input(&input[0]);
+                c2.zip_and_for_each(group_ids.iter(), |((value,bitmap),group_id)|
+                 {
+                     if *bitmap&&(*value>c1_data[*group_id]){
+                        c1_data[*group_id]+=*value;
+                    };
+                });
 
-                                let keep_a=(*a_bitmap & (*a>b)) as T;
-                                *a=*a*keep_a+b*(1-keep_a);
-                                *a_bitmap|=b_bitmap;
-
-                            }
-                        );
-                    }
-                    (true, false)=>{
-                        let c2_index=c2_index.downcast_ref()?;
-                        assert_eq!(group_ids.len(),c2_index.len());
-                        c2_index.iter().zip(group_ids.iter()).for_each(|(index, group_id)|
-                        {
-                            let a=&mut c1_data[*group_id];
-                            let a_bitmap=&mut c1_bitmap[*group_id];
-                            let b=c2_data[*index];
-
-                            let keep_a=(*a_bitmap & (*a>b)) as T;
-                            *a=*a*keep_a+b*(1-keep_a);
-                            *a_bitmap|=true;
-                        }
-                        );
-                    }
-                    (false, true)=>{
-                        assert_eq!(group_ids.len(),c2_data.len());
-                        let c2_bitmap=c2_bitmap.downcast_ref()?;
-                        c2_data.iter().zip(c2_bitmap).zip(group_ids).for_each(|((data, bitmap), group_id)|
-                        {
-
-                            let a=&mut c1_data[*group_id];
-                            let a_bitmap=&mut c1_bitmap[*group_id];
-                            let b=*data;
-                            let b_bitmap=bitmap;
-
-                            let keep_a=(*a_bitmap & (*a>b)) as T;
-                            *a=*a*keep_a+b*(1-keep_a);
-                            *a_bitmap|=b_bitmap;
-                        }
-                        );
-                    }
-                    (false, false)=>{
-                        assert_eq!(group_ids.len(),c2_data.len());
-                        c2_data.iter().zip(group_ids).for_each(|(data, group_id)|
-                        {
-
-                            let a=&mut c1_data[*group_id];
-                            let a_bitmap=&mut c1_bitmap[*group_id];
-                            let b=*data;
-
-                            let keep_a=(*a_bitmap & (*a>b)) as T;
-                            *a=*a*keep_a+b*(1-keep_a);
-                            *a_bitmap|=true;
-                        }
-
-                        );}
-
-                };
                 Ok(())
             }
         }
     )+)
 }
-
+/*
 macro_rules! operation_impl_binary {
     ($( $tr:ty)+) => ($(
         paste!   {
@@ -191,6 +122,10 @@ macro_rules! operation_impl_binary {
                 c1_data.reserve(number_of_groups);
                 c1_data.extend((0..number_of_groups).into_iter().map(|_| 0));
 
+
+
+
+
                 match (c2_index.is_some(), c2_bitmap.is_some()){
                     (true, true)=>{
                         let c2_index=c2_index.downcast_ref()?;
@@ -226,18 +161,18 @@ macro_rules! operation_impl_binary {
         }
     )+)
 }
-
+*/
 operation_impl_sized! {
     u64 u32
 }
-
+/*
 operation_impl_binary! {
     String
 }
-
+*/
 pub(crate) fn load_op_dict(dict: &mut OpDictionary) {
     operation_load! {dict;
-        u64 u32 String
+        u64 u32 /*String*/
     };
 }
 

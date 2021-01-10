@@ -151,7 +151,7 @@ impl<'a, 'b, T: 'static + Send + Sync>
                 len,
                 offset: *offset,
                 bitmap: bitmap.downcast_mut().unwrap(),
-                index: index.downcast_ref().unwrap(),
+                index: index.as_ref().unwrap(),
                 _phantom: PhantomData::<T>,
             }),
             (true, false) => Self::BitmapNoIndex(IUCBinaryBitmapNoIndex {
@@ -167,7 +167,7 @@ impl<'a, 'b, T: 'static + Send + Sync>
                 start_pos,
                 len,
                 offset: *offset,
-                index: index.downcast_ref().unwrap(),
+                index: index.as_ref().unwrap(),
                 _phantom: PhantomData::<T>,
             }),
             (false, false) => Self::NoBitmapNoIndex(IUCBinaryNoBitmapNoIndex {
