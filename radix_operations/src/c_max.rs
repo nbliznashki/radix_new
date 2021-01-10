@@ -237,7 +237,7 @@ operation_impl_binary! {
 
 pub(crate) fn load_op_dict(dict: &mut OpDictionary) {
     operation_load! {dict;
-        u64 u32
+        u64 u32 String
     };
 }
 

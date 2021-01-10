@@ -379,7 +379,35 @@ impl<'a> ColumnData<'a> {
             _ => Err("Operation not supported for columns which are not BinaryOwned")?,
         }
     }
-
+    pub fn truncate<T: 'static + Send + Sync>(&mut self) -> Result<(), ErrorDesc> {
+        match self {
+            ColumnData::Owned(c) => c.downcast_vec::<T>()?.truncate(0),
+            ColumnData::SliceMut(_) => Err(format!("Truncate failed for ColumnData::SliceRef",))?,
+            ColumnData::Slice(_) => Err(format!("Truncate failed for  ColumnData::Slice",))?,
+            ColumnData::Const(c) => c.downcast_vec::<T>()?.truncate(0),
+            ColumnData::BinaryOwned(c) => {
+                let (d, s, l, o) = c.downcast_binary_vec::<T>()?;
+                d.truncate(0);
+                s.truncate(0);
+                l.truncate(0);
+                *o = 0;
+            }
+            ColumnData::BinarySliceMut(_) => {
+                Err(format!("Truncate failed for  ColumnData::BinarySliceMut",))?
+            }
+            ColumnData::BinarySlice(_) => {
+                Err(format!("Truncate failed for ColumnData::BinarySlice",))?
+            }
+            ColumnData::BinaryConst(c) => {
+                let (d, s, l, o) = c.downcast_binary_vec::<T>()?;
+                d.truncate(0);
+                s.truncate(0);
+                l.truncate(0);
+                *o = 0;
+            }
+        };
+        Ok(())
+    }
     pub unsafe fn assume_init<T: 'static + Send + Sync>(self) -> Result<Self, ErrorDesc> {
         match self {
             ColumnData::Owned(c) => c.assume_init::<T>().map(|c| ColumnData::Owned(c)),

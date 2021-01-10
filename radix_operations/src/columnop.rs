@@ -250,17 +250,11 @@ macro_rules! sized_types_impl {
                 fn len(&self, inp: &ColumnWrapper)->Result<usize, ErrorDesc>
                 {
                     type T=$tr;
-                    inp.column().downcast_ref::<T>().map(|c| c.len())
+                    inp.column().data_len::<T>()
                 }
                 fn truncate(&self, inp: &mut ColumnWrapper) -> Result<(), ErrorDesc>{
                     type T=$tr;
-                    if let ColumnData::Owned(c)=inp.column_mut(){
-                        c.downcast_vec::<T>()?.truncate(0);
-                        Ok(())
-                    } else
-                    {
-                        Err("Only ColumnData::Owned can be truncated")?
-                    }
+                    inp.column_mut().truncate::<T>()
                 }
 
                 fn new<'a>(&self, data: Box<dyn Any>)->Result<ColumnData<'a>, ErrorDesc>{
@@ -305,11 +299,10 @@ macro_rules! sized_types_impl {
                 {
                     type T=$tr;
 
-                    let bitmap_update_required=src.bitmap().is_some();
                     let input=vec![InputTypes::Ref(src, src_index)];
 
 
-                    assign_2_sized_sized_unroll::<MaybeUninit<T>, T, _>(dst, &input, &bitmap_update_required, |c1_data,c1_bool|
+                    assign_2_sized_sized_unroll::<MaybeUninit<T>, T, _>(dst, &input, |c1_data,c1_bool|
                         (*c1_bool, MaybeUninit::new(*c1_data))
                    )
 
@@ -323,15 +316,21 @@ macro_rules! sized_types_impl {
                 ) -> Result<Vec<String>, ErrorDesc>
                 {
                     type T=$tr;
-                    let src=src.column().downcast_ref::<T>()?;
-                    if src_index.is_some(){
-                        let index=src_index.downcast_ref()?;
-                        let out:Vec<_>=index.iter().map(|v| format!("{}",v)).collect();
-                        Ok(out)
-                    } else {
-                        let out:Vec<_>=src.iter().map(|v| format!("{}",v)).collect();
-                        Ok(out)
-                    }
+
+                    let input=[InputTypes::Ref(src, src_index)];
+                    let output: Vec<String>=Vec::new();
+
+                    let output_col=OwnedColumn::new(output);
+                    let output_col=ColumnData::Owned(output_col);
+                    let mut output_col=ColumnWrapper::new_from_columndata(output_col);
+                    let bitmap_update_required=false;
+
+                    insert_2_sized_sized_unroll::<String, T, _>(&mut output_col, &input, &bitmap_update_required, |c1_data,c1_bool|
+                        (*c1_bool, format!("{}", *c1_data))
+                    )?;
+
+                    let output=output_col.get_inner().0.downcast_owned::<String>()?;
+                    Ok(output)
 
                 }
                 fn new_owned_with_capacity(&self, number_of_items: usize, _binary_capacity: usize, with_bitmap: bool) -> ColumnWrapper<'static>{
@@ -724,11 +723,11 @@ macro_rules! binary_types_impl {
                 {
                     type T=$tr;
 
-                    let bitmap_update_required=src.bitmap().is_some();
+
                     let input=vec![InputTypes::Ref(src, src_index)];
 
 
-                    assign_2_sized_binary_unroll::<MaybeUninit<T>, T, _>(dst, &&*input, &bitmap_update_required, |c1_data,c1_bool|
+                    assign_2_sized_binary_unroll::<MaybeUninit<T>, T, _>(dst, &&*input,  |c1_data,c1_bool|
                         (*c1_bool, MaybeUninit::new(<T as AsBytes>::from_bytes(c1_data))))
 
 
@@ -742,28 +741,21 @@ macro_rules! binary_types_impl {
                 ) -> Result<Vec<String>, ErrorDesc>
                 {
                     type T=$tr;
-                    let (datau8, start_pos, len,offset)=src.column().downcast_binary_ref::<T>()?;
 
-                    if src_index.is_some(){
-                        let index=src_index.downcast_ref()?;
+                    let input=[InputTypes::Ref(src, src_index)];
+                    let output: Vec<String>=Vec::new();
 
-                        let v: Vec<String>= index.iter().map(|i|
-                            {
-                                let s=start_pos[*i]-offset;
-                                let e=s+len[*i]-offset;
-                                format!("{}", <T as AsBytes>::from_bytes(&datau8[s..e]))
-                            }).collect();
-                        Ok(v)
-                    } else {
-                        assert_eq!(start_pos.len(), len.len());
-                        let v: Vec<_>=start_pos.iter().zip(len.iter()).map(|(s, l)|
-                        {
-                            let s=s-offset;
-                            let e=s+l;
-                            format!("{}", <T as AsBytes>::from_bytes(&datau8[s..e]))
-                        }).collect();
-                        Ok(v)
-                    }
+                    let output_col=OwnedColumn::new(output);
+                    let output_col=ColumnData::Owned(output_col);
+                    let mut output_col=ColumnWrapper::new_from_columndata(output_col);
+                    let bitmap_update_required=false;
+
+                    insert_2_sized_binary_unroll::<String, T, _>(&mut output_col, &input, &bitmap_update_required, |c1_data,c1_bool|
+                        (*c1_bool, AsBytes::from_bytes(c1_data))
+                    )?;
+
+                    let output=output_col.get_inner().0.downcast_owned::<String>()?;
+                    Ok(output)
 
                 }
                 fn new_owned_with_capacity(&self, number_of_items: usize, binary_capacity: usize, with_bitmap: bool) -> ColumnWrapper<'static>{

@@ -1,8 +1,6 @@
 use std::marker::PhantomData;
 
-use radix_column::{AsBytes, ColumnData, ColumnDataF, ColumnDataIndex, ColumnWrapper};
-
-use crate::{IUCBitmapIndex, IUCBitmapNoIndex, IUCNoBitmapIndex, IUCNoBitmapNoIndex};
+use radix_column::{ColumnData, ColumnDataF, ColumnDataIndex, ColumnWrapper};
 
 ////////////////////////////////////
 ////                            ////

@@ -26,7 +26,12 @@ impl<'a, T> IRCNoBitmapNoIndex<'a, T> {
     {
         self.data.iter().map(|t| (t.as_bytes(), &true))
     }
+    #[inline]
+    pub fn index(&self, i: usize) -> (bool, &T) {
+        (true, &self.data[i])
+    }
 }
+
 pub struct IRCBitmapNoIndex<'a, T> {
     pub data: &'a [T],
     pub bitmap: &'a [bool],
@@ -44,6 +49,10 @@ impl<'a, T> IRCBitmapNoIndex<'a, T> {
         T: AsBytes,
     {
         self.data.iter().map(|t| (t.as_bytes(), &true))
+    }
+    #[inline]
+    pub fn index(&self, i: usize) -> (bool, &T) {
+        (self.bitmap[i], &self.data[i])
     }
 }
 pub struct IRCNoBitmapIndex<'a, T> {
@@ -66,6 +75,10 @@ impl<'a, T> IRCNoBitmapIndex<'a, T> {
         self.index
             .iter()
             .map(move |i| (self.data[*i].as_bytes(), &true))
+    }
+    #[inline]
+    pub fn index(&self, i: usize) -> (bool, &T) {
+        (true, &self.data[self.index[i]])
     }
 }
 
@@ -93,6 +106,10 @@ impl<'a, T> IRCBitmapIndex<'a, T> {
             .iter()
             .map(move |i| (self.data[*i].as_bytes(), &self.bitmap[*i]))
     }
+    #[inline]
+    pub fn index(&self, i: usize) -> (bool, &T) {
+        (self.bitmap[self.index[i]], &self.data[self.index[i]])
+    }
 }
 
 pub struct IRCConst<'a, T> {
@@ -118,6 +135,9 @@ impl<'a, T> IRCConst<'a, T> {
         (0..self.target_len)
             .into_iter()
             .map(move |_| (self.data.as_bytes(), &self.bitmap))
+    }
+    pub fn index(&self, _i: usize) -> (bool, &T) {
+        (self.bitmap, &self.data)
     }
 }
 
@@ -190,6 +210,15 @@ impl<'a, T> ReadColumn<'a, T> {
             Self::NoBitmapIndex(c) => c.index.len(),
             Self::NoBitmapNoIndex(c) => c.data.len(),
             Self::Const(c) => c.target_len,
+        }
+    }
+    pub fn index(&self, i: usize) -> (bool, &T) {
+        match self {
+            Self::BitmapIndex(c) => c.index(i),
+            Self::BitmapNoIndex(c) => c.index(i),
+            Self::NoBitmapIndex(c) => c.index(i),
+            Self::NoBitmapNoIndex(c) => c.index(i),
+            Self::Const(c) => c.index(i),
         }
     }
     pub fn update_len_if_const(&mut self, new_len: usize) {
