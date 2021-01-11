@@ -362,6 +362,26 @@ impl<'a, T> ReadBinaryColumn<'a, T> {
     }
 
     #[inline]
+    pub fn enumerate_and_for_each<F>(&self, f: F)
+    where
+        F: FnMut((usize, (&[u8], &bool))),
+        T: AsBytes,
+    {
+        match self {
+            Self::BitmapIndex(c) => c.as_binary_iter().enumerate().for_each(f),
+            Self::BitmapNoIndex(c) => c.as_binary_iter().enumerate().for_each(f),
+            Self::NoBitmapIndex(c) => c.as_binary_iter().enumerate().for_each(f),
+            Self::NoBitmapNoIndex(c) => c.as_binary_iter().enumerate().for_each(f),
+            Self::Const(c) => c.as_binary_iter().enumerate().for_each(f),
+            Self::BitmapIndexOrig(c) => c.as_binary_iter().enumerate().for_each(f),
+            Self::BitmapNoIndexOrig(c) => c.as_binary_iter().enumerate().for_each(f),
+            Self::NoBitmapIndexOrig(c) => c.as_binary_iter().enumerate().for_each(f),
+            Self::NoBitmapNoIndexOrig(c) => c.as_binary_iter().enumerate().for_each(f),
+            Self::ConstOrig(c) => c.as_binary_iter().enumerate().for_each(f),
+        }
+    }
+
+    #[inline]
     pub fn zip_and_for_each<I, F>(&self, iter: I, f: F)
     where
         I: ExactSizeIterator,

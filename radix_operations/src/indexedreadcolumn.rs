@@ -167,8 +167,22 @@ impl<'a, T: Send + Sync + 'static>
             usize,
         ),
     ) -> Self {
-        let is_const = data.is_const();
-        let data = data.downcast_ref::<T>().unwrap();
+        let (is_const, data) = match data {
+            ColumnData::Const(c) => (true, c.downcast_ref::<T>().unwrap()),
+            ColumnData::Owned(c) => (false, c.downcast_ref::<T>().unwrap()),
+            ColumnData::Slice(c) => (false, c.downcast_ref::<T>().unwrap()),
+            ColumnData::SliceMut(c) => (false, c.downcast_ref::<T>().unwrap()),
+            ColumnData::BinaryOwned(_) => panic!("wrong type"),
+            ColumnData::BinarySlice(_) => panic!("wrong type"),
+            ColumnData::BinarySliceMut(_) => panic!("wrong type"),
+            ColumnData::BinaryConst(_) => panic!("wrong type"),
+        };
+
+        //let bitmap = bitmap.to_ref();
+        //let index = index.to_ref();
+
+        if is_const {};
+
         if is_const {
             if bitmap.is_some() {
                 Self::Const(IRCConst {
@@ -204,6 +218,18 @@ impl<'a, T: Send + Sync + 'static>
     }
 }
 
+impl<'a, T: Send + Sync + 'static> From<(&'a [T], &'a ColumnDataIndex<'a>)> for ReadColumn<'a, T> {
+    fn from((data, index): (&'a [T], &'a ColumnDataIndex<'a>)) -> Self {
+        match index {
+            ColumnDataIndex::None => Self::NoBitmapNoIndex(IRCNoBitmapNoIndex { data }),
+            ColumnDataIndex::Owned(i) => Self::NoBitmapIndex(IRCNoBitmapIndex {
+                data,
+                index: i.as_ref(),
+            }),
+            ColumnDataIndex::Slice(i) => Self::NoBitmapIndex(IRCNoBitmapIndex { data, index: i }),
+        }
+    }
+}
 impl<'a, T> ReadColumn<'a, T> {
     pub fn len(&self) -> usize {
         match self {
@@ -256,6 +282,19 @@ impl<'a, T> ReadColumn<'a, T> {
             Self::NoBitmapIndex(c) => c.as_iter().for_each(f),
             Self::NoBitmapNoIndex(c) => c.as_iter().for_each(f),
             Self::Const(c) => c.as_iter().for_each(f),
+        }
+    }
+    #[inline]
+    pub fn enumerate_and_for_each<F>(&self, f: F)
+    where
+        F: FnMut((usize, (&T, &bool))),
+    {
+        match self {
+            Self::BitmapIndex(c) => c.as_iter().enumerate().for_each(f),
+            Self::BitmapNoIndex(c) => c.as_iter().enumerate().for_each(f),
+            Self::NoBitmapIndex(c) => c.as_iter().enumerate().for_each(f),
+            Self::NoBitmapNoIndex(c) => c.as_iter().enumerate().for_each(f),
+            Self::Const(c) => c.as_iter().enumerate().for_each(f),
         }
     }
     #[inline]

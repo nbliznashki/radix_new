@@ -685,8 +685,8 @@ mod tests {
         let h2 = t.build_groups(&dict, &[1, 0]);
         let h2: Vec<_> = h2.iter().map(|(v, _)| v).flatten().map(|i| *i).collect();
         t.push(&dict, &h2).unwrap();
-
-        assert_eq!(h1, vec![0, 0, 1, 1, 0, 0, 1, 1, 1]);
+        //t.print(&dict).unwrap();
+        assert_eq!(h1, vec![0, 0, 1, 1, 0, 0, 1, 2, 1]);
         assert_eq!(h2, vec![0, 1, 2, 2, 0, 1, 2, 3, 3]);
     }
     #[test]

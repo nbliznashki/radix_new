@@ -435,6 +435,12 @@ pub enum ColumnDataF<'a, T> {
     None,
 }
 
+pub enum ColumnDataFRef<'a, T> {
+    None,
+    Number(&'a [T]),
+    Option(&'a [Option<T>]),
+}
+
 impl<'a, T> ColumnDataF<'a, T> {
     pub fn is_some(&self) -> bool {
         self.len().is_some()
@@ -460,6 +466,15 @@ impl<'a, T> ColumnDataF<'a, T> {
             ColumnDataF::Slice(s) => Ok(s),
             ColumnDataF::SliceMut(s) => Ok(s),
             ColumnDataF::None => Err("ColumnDataF is None and cannot be downcasted as a ref")?,
+        }
+    }
+
+    pub fn to_ref<'b>(&'b self) -> ColumnDataFRef<'b, T> {
+        match &self {
+            ColumnDataF::Owned(v) => ColumnDataFRef::Number(v.as_slice()),
+            ColumnDataF::SliceMut(s) => ColumnDataFRef::Number(s),
+            ColumnDataF::Slice(s) => ColumnDataFRef::Number(s),
+            ColumnDataF::None => ColumnDataFRef::None,
         }
     }
 
@@ -510,6 +525,12 @@ pub enum ColumnDataIndex<'a> {
     None,
 }
 
+pub enum ColumnDataIndexRef<'a> {
+    None,
+    Number(&'a [usize]),
+    Option(&'a [Option<usize>]),
+}
+
 impl<'a> ColumnDataIndex<'a> {
     pub fn is_some(&self) -> bool {
         self.len().is_some()
@@ -536,11 +557,11 @@ impl<'a> ColumnDataIndex<'a> {
         }
     }
 
-    pub fn downcast_ref<'b>(&'b self) -> Result<&'b [usize], ErrorDesc> {
+    pub fn to_ref<'b>(&'b self) -> ColumnDataIndexRef<'b> {
         match &self {
-            ColumnDataIndex::Owned(v) => Ok(v.as_slice()),
-            ColumnDataIndex::Slice(s) => Ok(s),
-            ColumnDataIndex::None => Err("ColumnDataF is None and cannot be downcasted as a ref")?,
+            ColumnDataIndex::Owned(v) => ColumnDataIndexRef::Number(v.as_slice()),
+            ColumnDataIndex::Slice(s) => ColumnDataIndexRef::Number(s),
+            ColumnDataIndex::None => ColumnDataIndexRef::None,
         }
     }
 
