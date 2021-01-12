@@ -1,4 +1,4 @@
-use std::{any::TypeId, ops::AddAssign};
+use std::any::TypeId;
 
 pub type ErrorDesc = Box<dyn std::error::Error>;
 
@@ -109,7 +109,7 @@ impl<'a> ColumnData<'a> {
         self.item_type_id() == std::any::TypeId::of::<T>()
     }
 
-    pub fn downcast_owned<T>(self) -> Result<Vec<T>, ErrorDesc>
+    pub fn to_vec<T>(self) -> Result<Vec<T>, ErrorDesc>
     where
         T: Send + Sync + 'static,
     {
@@ -434,11 +434,16 @@ pub enum ColumnDataF<'a, T> {
     SliceMut(&'a mut [T]),
     None,
 }
-
+#[derive(Debug, PartialEq, Eq)]
 pub enum ColumnDataFRef<'a, T> {
     None,
-    Number(&'a [T]),
-    Option(&'a [Option<T>]),
+    Some(&'a [T]),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ColumnDataFMut<'a, T> {
+    None,
+    Some(&'a mut [T]),
 }
 
 impl<'a, T> ColumnDataF<'a, T> {
@@ -460,7 +465,7 @@ impl<'a, T> ColumnDataF<'a, T> {
         }
     }
 
-    pub fn downcast_ref<'b>(&'b self) -> Result<&'b [T], ErrorDesc> {
+    pub fn to_slice<'b>(&'b self) -> Result<&'b [T], ErrorDesc> {
         match &self {
             ColumnDataF::Owned(v) => Ok(v.as_slice()),
             ColumnDataF::Slice(s) => Ok(s),
@@ -471,10 +476,28 @@ impl<'a, T> ColumnDataF<'a, T> {
 
     pub fn to_ref<'b>(&'b self) -> ColumnDataFRef<'b, T> {
         match &self {
-            ColumnDataF::Owned(v) => ColumnDataFRef::Number(v.as_slice()),
-            ColumnDataF::SliceMut(s) => ColumnDataFRef::Number(s),
-            ColumnDataF::Slice(s) => ColumnDataFRef::Number(s),
+            ColumnDataF::Owned(v) => ColumnDataFRef::Some(v.as_slice()),
+            ColumnDataF::SliceMut(s) => ColumnDataFRef::Some(s),
+            ColumnDataF::Slice(s) => ColumnDataFRef::Some(s),
             ColumnDataF::None => ColumnDataFRef::None,
+        }
+    }
+
+    pub fn to_mut<'b>(&'b mut self) -> ColumnDataFMut<'b, T>
+    where
+        T: Clone,
+    {
+        match self {
+            ColumnDataF::Owned(_) => {}
+            ColumnDataF::SliceMut(_) => {}
+            ColumnDataF::Slice(s) => *self = ColumnDataF::Owned(s.to_vec()),
+            ColumnDataF::None => {}
+        };
+        match self {
+            ColumnDataF::Owned(v) => ColumnDataFMut::Some(v.as_mut_slice()),
+            ColumnDataF::SliceMut(s) => ColumnDataFMut::Some(s),
+            ColumnDataF::Slice(_) => unreachable!(),
+            ColumnDataF::None => ColumnDataFMut::None,
         }
     }
 
@@ -522,82 +545,49 @@ pub enum ColumnDataIndex<'a> {
     //None,
     Owned(Vec<usize>),
     Slice(&'a [usize]),
+    OwnedOption(Vec<Option<usize>>),
+    SliceOption(&'a [Option<usize>]),
     None,
 }
-
+#[derive(Debug, PartialEq, Eq)]
 pub enum ColumnDataIndexRef<'a> {
     None,
-    Number(&'a [usize]),
-    Option(&'a [Option<usize>]),
+    Some(&'a [usize]),
+    SomeOption(&'a [Option<usize>]),
 }
 
 impl<'a> ColumnDataIndex<'a> {
-    pub fn is_some(&self) -> bool {
-        self.len().is_some()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        !self.len().is_some()
-    }
-
     pub fn len(&self) -> Option<usize> {
         match &self {
             //ColumnDataF::None => None,
             ColumnDataIndex::Owned(v) => Some(v.len()),
             ColumnDataIndex::Slice(s) => Some(s.len()),
+            ColumnDataIndex::OwnedOption(v) => Some(v.len()),
+            ColumnDataIndex::SliceOption(s) => Some(s.len()),
             ColumnDataIndex::None => None,
-        }
-    }
-
-    pub fn as_ref<'b>(&'b self) -> Result<&'b [usize], ErrorDesc> {
-        match &self {
-            ColumnDataIndex::Owned(v) => Ok(v.as_slice()),
-            ColumnDataIndex::Slice(s) => Ok(s),
-            ColumnDataIndex::None => Err("ColumnDataF is None and cannot be downcasted as a ref")?,
         }
     }
 
     pub fn to_ref<'b>(&'b self) -> ColumnDataIndexRef<'b> {
         match &self {
-            ColumnDataIndex::Owned(v) => ColumnDataIndexRef::Number(v.as_slice()),
-            ColumnDataIndex::Slice(s) => ColumnDataIndexRef::Number(s),
+            ColumnDataIndex::Owned(v) => ColumnDataIndexRef::Some(v.as_slice()),
+            ColumnDataIndex::Slice(s) => ColumnDataIndexRef::Some(s),
+            ColumnDataIndex::OwnedOption(v) => ColumnDataIndexRef::SomeOption(v.as_slice()),
+            ColumnDataIndex::SliceOption(s) => ColumnDataIndexRef::SomeOption(s),
             ColumnDataIndex::None => ColumnDataIndexRef::None,
         }
     }
 
-    pub fn downcast_mut<'b>(&'b mut self) -> Result<&'b mut [usize], ErrorDesc> {
-        match self {
-            ColumnDataIndex::Owned(v) => Ok(v.as_mut_slice()),
-            ColumnDataIndex::Slice(_) => Err("")?,
-            ColumnDataIndex::None => {
-                Err("ColumnDataF is None and cannot be downcasted as a mut ref")?
-            }
-        }
-    }
-
-    pub fn downcast_vec<'b>(&'b mut self) -> Result<&'b mut Vec<usize>, ErrorDesc>
-    where
-        'a: 'b,
-    {
-        match self {
-            ColumnDataIndex::Owned(v) => Ok(v),
-            ColumnDataIndex::Slice(_) => Err("")?,
-            ColumnDataIndex::None => {
-                Err("ColumnDataF is None and cannot be downcasted as a mut Vec")?
-            }
-        }
-    }
     pub fn new(data: Vec<usize>) -> Self {
         ColumnDataIndex::Owned(data)
     }
     pub fn new_from_slice(data: &'a [usize]) -> Self {
         ColumnDataIndex::Slice(data)
     }
-    pub fn is_owned(&self) -> bool {
-        match self {
-            ColumnDataIndex::Owned(_) => true,
-            ColumnDataIndex::Slice(_) => false,
-            ColumnDataIndex::None => false,
-        }
+    pub fn new_option(data: Vec<Option<usize>>) -> Self {
+        ColumnDataIndex::OwnedOption(data)
+    }
+    pub fn new_option_from_slice(data: &'a [Option<usize>]) -> Self {
+        ColumnDataIndex::SliceOption(data)
     }
 }

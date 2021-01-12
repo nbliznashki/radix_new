@@ -167,7 +167,7 @@ mod tests {
 
         let v = t.materialize::<u32>(&dict, &0).unwrap();
         assert_eq!(v.0, names);
-        assert_eq!(v.1.downcast_ref().unwrap(), bitmap.as_slice());
+        assert_eq!(v.1.to_ref(), ColumnDataFRef::Some(bitmap.as_slice()));
         //t.print(&dict).unwrap();
     }
 
@@ -197,8 +197,8 @@ mod tests {
         )
         .unwrap();
 
-        let c1_bitmap = c1.bitmap().downcast_ref().unwrap().to_vec();
-        let c2_bitmap = c2.bitmap().downcast_ref().unwrap().to_vec();
+        let c1_bitmap = c1.bitmap().to_slice().unwrap().to_vec();
+        let c2_bitmap = c2.bitmap().to_slice().unwrap().to_vec();
 
         t.push_with_bitmap::<u32>(&dict, c1.column().downcast_ref().unwrap(), &c1_bitmap)
             .unwrap();
@@ -324,28 +324,39 @@ mod tests {
     }
     #[test]
     fn test_filter() {
-        let mut index: Vec<usize> = vec![1, 2, 3, 4, 5];
+        let index: Vec<usize> = vec![1, 2, 3, 4, 5];
         let keep_all = vec![true, true, true, true, true];
         let keep_some = vec![false, true, false, true, false];
 
         let mut index_ref = ColumnDataIndex::new(index.clone());
         filter(&mut index_ref, &keep_all, &ColumnDataF::None, &None).unwrap();
-        assert_eq!(index_ref.downcast_vec().unwrap(), &mut vec![1, 2, 3, 4, 5]);
+        assert_eq!(
+            index_ref.to_ref(),
+            ColumnDataIndexRef::Some(vec![1, 2, 3, 4, 5].as_slice())
+        );
 
         let mut index_ref = ColumnDataIndex::new(index.clone());
         filter(&mut index_ref, &keep_some, &ColumnDataF::None, &None).unwrap();
-        assert_eq!(index_ref.downcast_vec().unwrap(), &mut vec![2, 4]);
+        assert_eq!(
+            index_ref.to_ref(),
+            ColumnDataIndexRef::Some(vec![2, 4].as_slice())
+        );
 
         let mut index_owned = ColumnDataIndex::new(index.clone());
         filter(&mut index_owned, &keep_all, &ColumnDataF::None, &None).unwrap();
+
         assert_eq!(
-            index_owned.downcast_vec().unwrap(),
-            &mut vec![1, 2, 3, 4, 5]
+            index_owned.to_ref(),
+            ColumnDataIndexRef::Some(vec![1, 2, 3, 4, 5].as_slice())
         );
 
         let mut index_owned = ColumnDataIndex::new(index.clone());
         filter(&mut index_owned, &keep_some, &ColumnDataF::None, &None).unwrap();
-        assert_eq!(index_owned.downcast_vec().unwrap(), &mut vec![2, 4]);
+
+        assert_eq!(
+            index_ref.to_ref(),
+            ColumnDataIndexRef::Some(vec![2, 4].as_slice())
+        );
     }
 
     #[test]
@@ -576,7 +587,7 @@ mod tests {
                 .iter()
                 .map(|c| {
                     let c_data = c.as_string(&dict, &ColumnDataIndex::None).unwrap();
-                    let c_bitmap = c.bitmap().downcast_ref().unwrap().to_vec();
+                    let c_bitmap = c.bitmap().to_slice().unwrap().to_vec();
                     (c_data, c_bitmap)
                 })
                 .collect();
@@ -593,7 +604,7 @@ mod tests {
                 .iter()
                 .map(|c| {
                     let c_data = c.as_string(&dict, &ColumnDataIndex::None).unwrap();
-                    let c_bitmap = c.bitmap().downcast_ref().unwrap().to_vec();
+                    let c_bitmap = c.bitmap().to_slice().unwrap().to_vec();
                     (c_data, c_bitmap)
                 })
                 .collect();

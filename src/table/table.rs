@@ -71,7 +71,7 @@ impl<'a> Table<'a> {
         }
 
         let res: Result<(), ErrorDesc>=self.partition_sizes.iter().zip(p_index.iter()).enumerate()
-        .try_for_each(|(partition_id, (p_size,index))| if index.is_empty() || (index.len()==Some(*p_size)) {Ok(())}
+        .try_for_each(|(partition_id, (p_size,index))| if index.len().map_or(true, |i| i==*p_size) {Ok(())}
         else {
             Err(format!("Mismatch while adding an index to a table: index partition {} has lenght {:?}, while the table partitio has length {} ",partition_id, index.len(), p_size))?
         });
@@ -193,7 +193,7 @@ impl<'a> Table<'a> {
 
         let cw_value = &self.columns[0][*column_id];
         let value = cw_value.to_const::<T>(dict)?;
-        let bitmap = cw_value.bitmap();
+        let bitmap = cw_value.bitmap().to_ref();
 
         let total_len: usize = self.partition_sizes.iter().sum();
         let mut output_data: Vec<MaybeUninit<T>> = Vec::with_capacity(total_len);
@@ -204,18 +204,9 @@ impl<'a> Table<'a> {
             .for_each(|t| *t = MaybeUninit::new(value.clone()));
         let output_data: Vec<T> = unsafe { std::mem::transmute(output_data) };
 
-        let output_bitmap = if bitmap.is_some() {
-            let bitmap_value = bitmap.downcast_ref().unwrap()[0];
-            let mut output_bitmap: Vec<MaybeUninit<bool>> = Vec::with_capacity(total_len);
-            unsafe { output_bitmap.set_len(total_len) };
-
-            output_bitmap
-                .par_iter_mut()
-                .for_each(|t| *t = MaybeUninit::new(bitmap_value));
-            let output_bitmap: Vec<bool> = unsafe { std::mem::transmute(output_bitmap) };
-            ColumnDataF::new(output_bitmap)
-        } else {
-            ColumnDataF::None
+        let output_bitmap = match bitmap {
+            ColumnDataFRef::None => ColumnDataF::None,
+            ColumnDataFRef::Some(bitmap) => ColumnDataF::Owned(bitmap.to_vec()),
         };
 
         Ok((output_data, output_bitmap))
@@ -352,14 +343,16 @@ impl<'a> Table<'a> {
                 )
             })
             .map(|(mut s, b)| {
+                let b = b.to_ref();
                 let mut s = if !is_const {
                     ColumnWrapper::new_from_vec(dict, s)
                 } else {
                     ColumnWrapper::new_const(dict, s.pop().unwrap())
                 };
-                if b.is_some() {
-                    s.bitmap_set(ColumnDataF::new_from_slice(b.downcast_ref().unwrap()));
-                }
+                match b {
+                    ColumnDataFRef::Some(b) => s.bitmap_set(ColumnDataF::new_from_slice(b)),
+                    ColumnDataFRef::None => {}
+                };
                 s
             })
             .collect();
@@ -368,14 +361,15 @@ impl<'a> Table<'a> {
 
         let (mut v, b) =
             self.materialize_common::<String>(dict, column_id, p_column_str_ref, p_index)?;
-        if b.is_some() {
-            v.par_iter_mut()
-                .zip_eq(b.downcast_ref().unwrap().par_iter())
-                .for_each(|(s, b)| {
-                    if !b {
-                        *s = "(null)".to_string()
-                    }
-                });
+        let b = b.to_ref();
+
+        match b {
+            ColumnDataFRef::Some(b) => v.par_iter_mut().zip_eq(b.par_iter()).for_each(|(s, b)| {
+                if !b {
+                    *s = "(null)".to_string()
+                }
+            }),
+            ColumnDataFRef::None => {}
         }
         Ok(v)
     }
@@ -511,7 +505,7 @@ impl<'a> Table<'a> {
 
                         //TO-DO: use index!
                         let result = match result {
-                            InputTypes::Owned(res, index) => res,
+                            InputTypes::Owned(res, _index) => res,
                             _ => panic!(),
                         };
                         let b = result.column().downcast_ref::<bool>().unwrap();
@@ -580,7 +574,7 @@ impl<'a> Table<'a> {
                     match res {
                         InputTypes::Owned(res, index) => {
                             c.push(res);
-                            if index.is_some() {
+                            if index != ColumnDataIndex::None {
                                 i.push(index);
                             }
                         }

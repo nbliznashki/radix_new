@@ -1,8 +1,10 @@
-use radix_column::{AsBytes, ColumnData, ColumnDataF, ColumnDataIndex};
+use radix_column::{
+    AsBytes, ColumnData, ColumnDataF, ColumnDataFRef, ColumnDataIndex, ColumnDataIndexRef,
+};
 
 use crate::{
-    IRCBitmapIndex, IRCBitmapNoIndex, IRCConst, IRCNoBitmapIndex, IRCNoBitmapNoIndex, InputTypes,
-    ReadColumn,
+    IRCBitmapIndex, IRCBitmapIndexOption, IRCBitmapNoIndex, IRCConst, IRCNoBitmapIndex,
+    IRCNoBitmapIndexOption, IRCNoBitmapNoIndex, InputTypes, ReadColumn,
 };
 
 /////////////////////////////
@@ -128,7 +130,79 @@ impl<'a> IRCBinaryBitmapIndex<'a> {
         )
     }
 }
+///////////////////////////////////////
+pub struct IRCBinaryNoBitmapIndexOption<'a> {
+    pub data: &'a [u8],
+    pub start_pos: &'a [usize],
+    pub len: &'a [usize],
+    pub offset: usize,
+    pub index: &'a [Option<usize>],
+}
 
+impl<'a> IRCBinaryNoBitmapIndexOption<'a> {
+    #[inline]
+    pub fn as_binary_iter<'i>(
+        &'i self,
+    ) -> impl ExactSizeIterator<Item = (&[u8], &bool)> + 'i + Clone {
+        self.index.iter().map(move |i| {
+            i.map_or((&self.data[0..0], &false), |i| {
+                (
+                    &self.data[self.start_pos[i] - self.offset
+                        ..self.start_pos[i] + self.len[i] - self.offset],
+                    &true,
+                )
+            })
+        })
+    }
+    #[inline]
+    pub fn index(&self, i: usize) -> (bool, &[u8]) {
+        let i = self.index[i];
+        i.map_or((false, &self.data[0..0]), |i| {
+            (
+                true,
+                &self.data[self.start_pos[i] - self.offset
+                    ..self.start_pos[i] + self.len[i] - self.offset],
+            )
+        })
+    }
+}
+
+pub struct IRCBinaryBitmapIndexOption<'a> {
+    pub data: &'a [u8],
+    pub start_pos: &'a [usize],
+    pub len: &'a [usize],
+    pub offset: usize,
+    pub index: &'a [Option<usize>],
+    pub bitmap: &'a [bool],
+}
+
+impl<'a> IRCBinaryBitmapIndexOption<'a> {
+    #[inline]
+    pub fn as_binary_iter<'i>(
+        &'i self,
+    ) -> impl ExactSizeIterator<Item = (&[u8], &bool)> + 'i + Clone {
+        self.index.iter().zip(self.bitmap).map(move |(i, b)| {
+            i.map_or((&self.data[0..0], &false), |i| {
+                (
+                    &self.data[self.start_pos[i] - self.offset
+                        ..self.start_pos[i] + self.len[i] - self.offset],
+                    b,
+                )
+            })
+        })
+    }
+    pub fn index(&self, i: usize) -> (bool, &[u8]) {
+        let i = self.index[i];
+        i.map_or((false, &self.data[0..0]), |i| {
+            (
+                self.bitmap[i],
+                &self.data[self.start_pos[i] - self.offset
+                    ..self.start_pos[i] + self.len[i] - self.offset],
+            )
+        })
+    }
+}
+///////////////////////////////////////
 pub struct IRCBinaryConst<'a> {
     pub data: &'a [u8],
     pub bitmap: bool,
@@ -154,11 +228,15 @@ pub enum ReadBinaryColumn<'a, T> {
     BitmapNoIndex(IRCBinaryBitmapNoIndex<'a>),
     NoBitmapIndex(IRCBinaryNoBitmapIndex<'a>),
     NoBitmapNoIndex(IRCBinaryNoBitmapNoIndex<'a>),
+    BitmapIndexOption(IRCBinaryBitmapIndexOption<'a>),
+    NoBitmapIndexOption(IRCBinaryNoBitmapIndexOption<'a>),
     Const(IRCBinaryConst<'a>),
     BitmapIndexOrig(IRCBitmapIndex<'a, T>),
     BitmapNoIndexOrig(IRCBitmapNoIndex<'a, T>),
     NoBitmapIndexOrig(IRCNoBitmapIndex<'a, T>),
     NoBitmapNoIndexOrig(IRCNoBitmapNoIndex<'a, T>),
+    BitmapIndexOptionOrig(IRCBitmapIndexOption<'a, T>),
+    NoBitmapIndexOptionOrig(IRCNoBitmapIndexOption<'a, T>),
     ConstOrig(IRCConst<'a, T>),
 }
 
@@ -178,53 +256,92 @@ impl<'a, T: Send + Sync + 'static>
             usize,
         ),
     ) -> Self {
-        let is_const = data.is_const();
-        let (data, start_pos, len, offset) = data.downcast_binary_ref::<T>().unwrap();
+        let (is_const, (data, start_pos, len, offset)) = match data {
+            ColumnData::Owned(_) => panic!("wrong type"),
+            ColumnData::Slice(_) => panic!("wrong type"),
+            ColumnData::SliceMut(_) => panic!("wrong type"),
+            ColumnData::Const(_) => panic!("wrong type"),
+            ColumnData::BinaryConst(c) => (true, c.downcast_binary_ref::<T>().unwrap()),
+            ColumnData::BinaryOwned(c) => (false, c.downcast_binary_ref::<T>().unwrap()),
+            ColumnData::BinarySlice(c) => (false, c.downcast_binary_ref::<T>().unwrap()),
+            ColumnData::BinarySliceMut(c) => (false, c.downcast_binary_ref::<T>().unwrap()),
+        };
+
         let offset = *offset;
+        let bitmap = bitmap.to_ref();
+        let index = index.to_ref();
+
         if is_const {
-            if bitmap.is_some() {
-                Self::Const(IRCBinaryConst {
-                    data: &data[start_pos[0] - offset..start_pos[0] - offset + len[0]],
-                    bitmap: bitmap.downcast_ref().unwrap()[0],
-                    target_len: target_len,
-                })
+            let data = &data[start_pos[0] - offset..start_pos[0] - offset + len[0]];
+            let bitmap = if let ColumnDataIndexRef::SomeOption(o) = index {
+                o[0].is_some()
+            } else if let ColumnDataFRef::Some(b) = bitmap {
+                b[0]
             } else {
-                Self::Const(IRCBinaryConst {
-                    data: &data[start_pos[0] - offset..start_pos[0] - offset + len[0]],
-                    bitmap: true,
-                    target_len: target_len,
-                })
-            }
+                true
+            };
+            Self::Const(IRCBinaryConst {
+                data,
+                bitmap,
+                target_len,
+            })
         } else {
-            match (bitmap.is_some(), index.is_some()) {
-                (true, true) => Self::BitmapIndex(IRCBinaryBitmapIndex {
-                    data,
-                    start_pos,
-                    len,
-                    offset,
-                    bitmap: bitmap.downcast_ref().unwrap(),
-                    index: index.as_ref().unwrap(),
-                }),
-                (true, false) => Self::BitmapNoIndex(IRCBinaryBitmapNoIndex {
-                    data,
-                    start_pos,
-                    len,
-                    offset,
-                    bitmap: bitmap.downcast_ref().unwrap(),
-                }),
-                (false, true) => Self::NoBitmapIndex(IRCBinaryNoBitmapIndex {
-                    data,
-                    start_pos,
-                    len,
-                    offset,
-                    index: index.as_ref().unwrap(),
-                }),
-                (false, false) => Self::NoBitmapNoIndex(IRCBinaryNoBitmapNoIndex {
-                    data,
-                    start_pos,
-                    len,
-                    offset,
-                }),
+            match (bitmap, index) {
+                (ColumnDataFRef::Some(bitmap), ColumnDataIndexRef::Some(index)) => {
+                    Self::BitmapIndex(IRCBinaryBitmapIndex {
+                        data,
+                        start_pos,
+                        len,
+                        offset,
+                        bitmap,
+                        index,
+                    })
+                }
+                (ColumnDataFRef::Some(bitmap), ColumnDataIndexRef::SomeOption(index)) => {
+                    Self::BitmapIndexOption(IRCBinaryBitmapIndexOption {
+                        data,
+                        start_pos,
+                        len,
+                        offset,
+                        bitmap,
+                        index,
+                    })
+                }
+                (ColumnDataFRef::Some(bitmap), ColumnDataIndexRef::None) => {
+                    Self::BitmapNoIndex(IRCBinaryBitmapNoIndex {
+                        data,
+                        start_pos,
+                        len,
+                        offset,
+                        bitmap,
+                    })
+                }
+                (ColumnDataFRef::None, ColumnDataIndexRef::Some(index)) => {
+                    Self::NoBitmapIndex(IRCBinaryNoBitmapIndex {
+                        data,
+                        start_pos,
+                        len,
+                        offset,
+                        index,
+                    })
+                }
+                (ColumnDataFRef::None, ColumnDataIndexRef::SomeOption(index)) => {
+                    Self::NoBitmapIndexOption(IRCBinaryNoBitmapIndexOption {
+                        data,
+                        start_pos,
+                        len,
+                        offset,
+                        index,
+                    })
+                }
+                (ColumnDataFRef::None, ColumnDataIndexRef::None) => {
+                    Self::NoBitmapNoIndex(IRCBinaryNoBitmapNoIndex {
+                        data,
+                        start_pos,
+                        len,
+                        offset,
+                    })
+                }
             }
         }
     }
@@ -237,11 +354,15 @@ impl<'a, T> ReadBinaryColumn<'a, T> {
             Self::BitmapNoIndex(c) => c.start_pos.len(),
             Self::NoBitmapIndex(c) => c.index.len(),
             Self::NoBitmapNoIndex(c) => c.start_pos.len(),
+            Self::BitmapIndexOption(c) => c.index.len(),
+            Self::NoBitmapIndexOption(c) => c.index.len(),
             Self::Const(c) => c.target_len,
             Self::BitmapIndexOrig(c) => c.index.len(),
             Self::BitmapNoIndexOrig(c) => c.data.len(),
             Self::NoBitmapIndexOrig(c) => c.index.len(),
             Self::NoBitmapNoIndexOrig(c) => c.data.len(),
+            Self::BitmapIndexOptionOrig(c) => c.index.len(),
+            Self::NoBitmapIndexOptionOrig(c) => c.index.len(),
             Self::ConstOrig(c) => c.target_len,
         }
     }
@@ -254,6 +375,8 @@ impl<'a, T> ReadBinaryColumn<'a, T> {
             Self::BitmapNoIndex(c) => c.index(i),
             Self::NoBitmapIndex(c) => c.index(i),
             Self::NoBitmapNoIndex(c) => c.index(i),
+            Self::BitmapIndexOption(c) => c.index(i),
+            Self::NoBitmapIndexOption(c) => c.index(i),
             Self::Const(c) => c.index(i),
             Self::BitmapIndexOrig(c) => {
                 let (a, b) = c.index(i);
@@ -268,6 +391,14 @@ impl<'a, T> ReadBinaryColumn<'a, T> {
                 (a, b.as_bytes())
             }
             Self::NoBitmapNoIndexOrig(c) => {
+                let (a, b) = c.index(i);
+                (a, b.as_bytes())
+            }
+            Self::BitmapIndexOptionOrig(c) => {
+                let (a, b) = c.index(i);
+                (a, b.as_bytes())
+            }
+            Self::NoBitmapIndexOptionOrig(c) => {
                 let (a, b) = c.index(i);
                 (a, b.as_bytes())
             }
@@ -299,6 +430,14 @@ impl<'a, T> ReadBinaryColumn<'a, T> {
                 let (a, b) = c.index(i);
                 (a, AsBytes::from_bytes(b))
             }
+            Self::BitmapIndexOption(c) => {
+                let (a, b) = c.index(i);
+                (a, AsBytes::from_bytes(b))
+            }
+            Self::NoBitmapIndexOption(c) => {
+                let (a, b) = c.index(i);
+                (a, AsBytes::from_bytes(b))
+            }
             Self::Const(c) => {
                 let (a, b) = c.index(i);
                 (a, AsBytes::from_bytes(b))
@@ -319,6 +458,14 @@ impl<'a, T> ReadBinaryColumn<'a, T> {
                 let (a, b) = c.index(i);
                 (a, b.clone())
             }
+            Self::BitmapIndexOptionOrig(c) => {
+                let (a, b) = c.index(i);
+                (a, b.clone())
+            }
+            Self::NoBitmapIndexOptionOrig(c) => {
+                let (a, b) = c.index(i);
+                (a, b.clone())
+            }
             Self::ConstOrig(c) => {
                 let (a, b) = c.index(i);
                 (a, b.clone())
@@ -332,11 +479,15 @@ impl<'a, T> ReadBinaryColumn<'a, T> {
             Self::BitmapNoIndex(_) => {}
             Self::NoBitmapIndex(_) => {}
             Self::NoBitmapNoIndex(_) => {}
+            Self::BitmapIndexOption(_) => {}
+            Self::NoBitmapIndexOption(_) => {}
             Self::Const(c) => c.target_len = new_len,
             Self::BitmapIndexOrig(_) => {}
             Self::BitmapNoIndexOrig(_) => {}
             Self::NoBitmapIndexOrig(_) => {}
             Self::NoBitmapNoIndexOrig(_) => {}
+            Self::BitmapIndexOptionOrig(_) => {}
+            Self::NoBitmapIndexOptionOrig(_) => {}
             Self::ConstOrig(c) => c.target_len = new_len,
         }
     }
@@ -352,11 +503,15 @@ impl<'a, T> ReadBinaryColumn<'a, T> {
             Self::BitmapNoIndex(c) => c.as_binary_iter().for_each(f),
             Self::NoBitmapIndex(c) => c.as_binary_iter().for_each(f),
             Self::NoBitmapNoIndex(c) => c.as_binary_iter().for_each(f),
+            Self::BitmapIndexOption(c) => c.as_binary_iter().for_each(f),
+            Self::NoBitmapIndexOption(c) => c.as_binary_iter().for_each(f),
             Self::Const(c) => c.as_binary_iter().for_each(f),
             Self::BitmapIndexOrig(c) => c.as_binary_iter().for_each(f),
             Self::BitmapNoIndexOrig(c) => c.as_binary_iter().for_each(f),
             Self::NoBitmapIndexOrig(c) => c.as_binary_iter().for_each(f),
             Self::NoBitmapNoIndexOrig(c) => c.as_binary_iter().for_each(f),
+            Self::BitmapIndexOptionOrig(c) => c.as_binary_iter().for_each(f),
+            Self::NoBitmapIndexOptionOrig(c) => c.as_binary_iter().for_each(f),
             Self::ConstOrig(c) => c.as_binary_iter().for_each(f),
         }
     }
@@ -372,11 +527,15 @@ impl<'a, T> ReadBinaryColumn<'a, T> {
             Self::BitmapNoIndex(c) => c.as_binary_iter().enumerate().for_each(f),
             Self::NoBitmapIndex(c) => c.as_binary_iter().enumerate().for_each(f),
             Self::NoBitmapNoIndex(c) => c.as_binary_iter().enumerate().for_each(f),
+            Self::BitmapIndexOption(c) => c.as_binary_iter().enumerate().for_each(f),
+            Self::NoBitmapIndexOption(c) => c.as_binary_iter().enumerate().for_each(f),
             Self::Const(c) => c.as_binary_iter().enumerate().for_each(f),
             Self::BitmapIndexOrig(c) => c.as_binary_iter().enumerate().for_each(f),
             Self::BitmapNoIndexOrig(c) => c.as_binary_iter().enumerate().for_each(f),
             Self::NoBitmapIndexOrig(c) => c.as_binary_iter().enumerate().for_each(f),
             Self::NoBitmapNoIndexOrig(c) => c.as_binary_iter().enumerate().for_each(f),
+            Self::BitmapIndexOptionOrig(c) => c.as_binary_iter().enumerate().for_each(f),
+            Self::NoBitmapIndexOptionOrig(c) => c.as_binary_iter().enumerate().for_each(f),
             Self::ConstOrig(c) => c.as_binary_iter().enumerate().for_each(f),
         }
     }
@@ -393,11 +552,15 @@ impl<'a, T> ReadBinaryColumn<'a, T> {
             Self::BitmapNoIndex(c) => c.as_binary_iter().zip(iter).for_each(f),
             Self::NoBitmapIndex(c) => c.as_binary_iter().zip(iter).for_each(f),
             Self::NoBitmapNoIndex(c) => c.as_binary_iter().zip(iter).for_each(f),
+            Self::BitmapIndexOption(c) => c.as_binary_iter().zip(iter).for_each(f),
+            Self::NoBitmapIndexOption(c) => c.as_binary_iter().zip(iter).for_each(f),
             Self::Const(c) => c.as_binary_iter().zip(iter).for_each(f),
             Self::BitmapIndexOrig(c) => c.as_binary_iter().zip(iter).for_each(f),
             Self::BitmapNoIndexOrig(c) => c.as_binary_iter().zip(iter).for_each(f),
             Self::NoBitmapIndexOrig(c) => c.as_binary_iter().zip(iter).for_each(f),
             Self::NoBitmapNoIndexOrig(c) => c.as_binary_iter().zip(iter).for_each(f),
+            Self::BitmapIndexOptionOrig(c) => c.as_binary_iter().zip(iter).for_each(f),
+            Self::NoBitmapIndexOptionOrig(c) => c.as_binary_iter().zip(iter).for_each(f),
             Self::ConstOrig(c) => c.as_binary_iter().zip(iter).for_each(f),
         }
     }
@@ -423,6 +586,8 @@ impl<'a, T> ReadBinaryColumn<'a, T> {
                 ReadColumn::BitmapNoIndex(c) => ReadBinaryColumn::BitmapNoIndexOrig(c),
                 ReadColumn::NoBitmapIndex(c) => ReadBinaryColumn::NoBitmapIndexOrig(c),
                 ReadColumn::NoBitmapNoIndex(c) => ReadBinaryColumn::NoBitmapNoIndexOrig(c),
+                ReadColumn::BitmapIndexOption(c) => ReadBinaryColumn::BitmapIndexOptionOrig(c),
+                ReadColumn::NoBitmapIndexOption(c) => ReadBinaryColumn::NoBitmapIndexOptionOrig(c),
                 ReadColumn::Const(c) => ReadBinaryColumn::ConstOrig(c),
             }
         }

@@ -58,6 +58,8 @@ where
         ReadColumn::BitmapNoIndex(col) => f_1_sized_sized(c1, col.as_iter(), f),
         ReadColumn::NoBitmapIndex(col) => f_1_sized_sized(c1, col.as_iter(), f),
         ReadColumn::NoBitmapNoIndex(col) => f_1_sized_sized(c1, col.as_iter(), f),
+        ReadColumn::BitmapIndexOption(col) => f_1_sized_sized(c1, col.as_iter(), f),
+        ReadColumn::NoBitmapIndexOption(col) => f_1_sized_sized(c1, col.as_iter(), f),
         ReadColumn::Const(col) => f_1_sized_sized(c1, col.as_iter(), f),
     }
 }
@@ -213,6 +215,12 @@ where
         ReadBinaryColumn::NoBitmapNoIndex(c) => {
             f_1_sized_binary::<T1, T2, _, _, _>(c1, c.as_binary_iter(), f)
         }
+        ReadBinaryColumn::BitmapIndexOption(c) => {
+            f_1_sized_binary::<T1, T2, _, _, _>(c1, c.as_binary_iter(), f)
+        }
+        ReadBinaryColumn::NoBitmapIndexOption(c) => {
+            f_1_sized_binary::<T1, T2, _, _, _>(c1, c.as_binary_iter(), f)
+        }
         ReadBinaryColumn::Const(c) => {
             f_1_sized_binary::<T1, T2, _, _, _>(c1, c.as_binary_iter(), f)
         }
@@ -226,6 +234,12 @@ where
             f_1_sized_binary::<T1, T2, _, _, _>(c1, c.as_binary_iter(), f)
         }
         ReadBinaryColumn::NoBitmapNoIndexOrig(c) => {
+            f_1_sized_binary::<T1, T2, _, _, _>(c1, c.as_binary_iter(), f)
+        }
+        ReadBinaryColumn::BitmapIndexOptionOrig(c) => {
+            f_1_sized_binary::<T1, T2, _, _, _>(c1, c.as_binary_iter(), f)
+        }
+        ReadBinaryColumn::NoBitmapIndexOptionOrig(c) => {
             f_1_sized_binary::<T1, T2, _, _, _>(c1, c.as_binary_iter(), f)
         }
         ReadBinaryColumn::ConstOrig(c) => {

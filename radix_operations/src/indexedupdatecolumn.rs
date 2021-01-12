@@ -1,4 +1,6 @@
-use radix_column::{ColumnData, ColumnDataF, ColumnDataIndex, ColumnWrapper};
+use radix_column::{
+    ColumnData, ColumnDataF, ColumnDataFMut, ColumnDataIndex, ColumnDataIndexRef, ColumnWrapper,
+};
 
 /////////////////////////////
 ////                     ////
@@ -158,21 +160,32 @@ impl<'a, 'b, T: Send + Sync + 'static>
         ),
     ) -> Self {
         let data = data.downcast_mut::<T>().unwrap();
-        match (bitmap.is_some(), index.is_some()) {
-            (true, true) => Self::BitmapIndex(IUCBitmapIndex {
-                data: data,
-                bitmap: bitmap.downcast_mut().unwrap(),
-                index: index.as_ref().unwrap(),
-            }),
-            (true, false) => Self::BitmapNoIndex(IUCBitmapNoIndex {
-                data: data,
-                bitmap: bitmap.downcast_mut().unwrap(),
-            }),
-            (false, true) => Self::NoBitmapIndex(IUCNoBitmapIndex {
-                data: data,
-                index: index.as_ref().unwrap(),
-            }),
-            (false, false) => Self::NoBitmapNoIndex(IUCNoBitmapNoIndex { data: data }),
+        let bitmap = bitmap.to_mut();
+        let index = index.to_ref();
+
+        match (bitmap, index) {
+            (ColumnDataFMut::Some(bitmap), ColumnDataIndexRef::Some(index)) => {
+                Self::BitmapIndex(IUCBitmapIndex {
+                    data,
+                    bitmap,
+                    index,
+                })
+            }
+            (ColumnDataFMut::Some(_bitmap), ColumnDataIndexRef::SomeOption(_index)) => {
+                panic!("Update column indexed by Option<usize> is not supported")
+            }
+            (ColumnDataFMut::Some(bitmap), ColumnDataIndexRef::None) => {
+                Self::BitmapNoIndex(IUCBitmapNoIndex { data, bitmap })
+            }
+            (ColumnDataFMut::None, ColumnDataIndexRef::Some(index)) => {
+                Self::NoBitmapIndex(IUCNoBitmapIndex { data, index })
+            }
+            (ColumnDataFMut::None, ColumnDataIndexRef::SomeOption(_index)) => {
+                panic!("Update column indexed by Option<usize> is not supported")
+            }
+            (ColumnDataFMut::None, ColumnDataIndexRef::None) => {
+                Self::NoBitmapNoIndex(IUCNoBitmapNoIndex { data })
+            }
         }
     }
 }

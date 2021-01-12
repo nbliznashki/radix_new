@@ -221,7 +221,7 @@ impl<'a> TableExpression<'a> {
 
         if !part_by.is_empty() {
             let buffer_group_ids = buffer.pop(dict, std::any::TypeId::of::<usize>())?;
-            let mut buffer_group_ids = buffer_group_ids.get_inner().0.downcast_owned::<usize>()?;
+            let mut buffer_group_ids = buffer_group_ids.get_inner().0.to_vec::<usize>()?;
 
             let _number_of_groups = buffer.pop(dict, std::any::TypeId::of::<usize>())?;
 
@@ -283,7 +283,7 @@ impl<'a> TableExpression<'a> {
                 _ => panic!(),
             };
             let (v, _) = v.get_inner();
-            let v = v.downcast_owned::<usize>()?;
+            let v = v.to_vec::<usize>()?;
             output_index = ColumnDataIndex::new(v);
         }
         inp.into_iter().for_each(|inp| {

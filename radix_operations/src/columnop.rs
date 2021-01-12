@@ -27,7 +27,7 @@ fn copy_to_buckets_part<T: 'static + Copy + Send + Sync>(
     let mut items_written = 0;
     let src: ReadColumn<T> = ReadColumn::from((src, src_index));
 
-    src.zip_and_for_each(hash.iter(), |((val, bitmap), h)| {
+    src.zip_and_for_each(hash.iter(), |((val, _bitmap), h)| {
         let bucket_id = (*h & buckets_mask) as usize;
         dst[bucket_id][offsets[bucket_id]] = *val;
         offsets[bucket_id] += 1;
@@ -47,7 +47,7 @@ fn copy_to_buckets_data_uninit_part<T: 'static + Copy + Send + Sync>(
     let mut items_written = 0;
     let src: ReadColumn<T> = ReadColumn::from((src.column(), src.bitmap(), src_index, hash.len()));
 
-    src.zip_and_for_each(hash.iter(), |((val, bitmap), h)| {
+    src.zip_and_for_each(hash.iter(), |((val, _bitmap), h)| {
         let bucket_id = (*h & buckets_mask) as usize;
         dst[bucket_id][offsets[bucket_id]] = MaybeUninit::new(*val);
         offsets[bucket_id] += 1;
@@ -55,7 +55,7 @@ fn copy_to_buckets_data_uninit_part<T: 'static + Copy + Send + Sync>(
     });
     Ok(items_written)
 }
-fn copy_to_buckets_bitmap_part<T: 'static + Copy + Send + Sync>(
+fn copy_to_buckets_bitmap_part<T: 'static + Send + Sync>(
     hash: &Vec<u64>,
     buckets_mask: u64,
     src: &ColumnWrapper,
@@ -66,7 +66,7 @@ fn copy_to_buckets_bitmap_part<T: 'static + Copy + Send + Sync>(
     let mut items_written = 0;
     let src: ReadColumn<T> = ReadColumn::from((src.column(), src.bitmap(), src_index, hash.len()));
 
-    src.zip_and_for_each(hash.iter(), |((val, bitmap), h)| {
+    src.zip_and_for_each(hash.iter(), |((_val, bitmap), h)| {
         let bucket_id = (*h & buckets_mask) as usize;
         dst[bucket_id][offsets[bucket_id]] = *bitmap;
         offsets[bucket_id] += 1;
@@ -86,7 +86,7 @@ fn copy_to_buckets_binary_part<T: 'static + AsBytes + Send + Sync>(
     let mut bytes_written: usize = 0;
     let src: ReadBinaryColumn<T> =
         ReadBinaryColumn::from((src.column(), src.bitmap(), src_index, hash.len()));
-    src.zip_and_for_each(hash.iter(), |((val, bitmap), h)| {
+    src.zip_and_for_each(hash.iter(), |((val, _bitmap), h)| {
         let bucket_id = (*h & buckets_mask) as usize;
         let (dst_datau8, dst_start_pos, dst_len, dst_offset) = &mut dst[bucket_id];
 
@@ -107,7 +107,7 @@ fn copy_to_buckets_binary_part<T: 'static + AsBytes + Send + Sync>(
     Ok(bytes_written)
 }
 
-fn copy_to_buckets_binary_bitmap_part<T: 'static + Copy + Send + Sync>(
+fn copy_to_buckets_bitmap_binary_part<T: 'static + Send + Sync + AsBytes>(
     hash: &Vec<u64>,
     buckets_mask: u64,
     src: &ColumnWrapper,
@@ -116,9 +116,10 @@ fn copy_to_buckets_binary_bitmap_part<T: 'static + Copy + Send + Sync>(
     dst: &mut [&mut [bool]],
 ) -> Result<usize, ErrorDesc> {
     let mut items_written = 0;
-    let src: ReadColumn<T> = ReadColumn::from((src.column(), src.bitmap(), src_index, hash.len()));
+    let src: ReadBinaryColumn<T> =
+        ReadBinaryColumn::from((src.column(), src.bitmap(), src_index, hash.len()));
 
-    src.zip_and_for_each(hash.iter(), |((val, bitmap), h)| {
+    src.zip_and_for_each(hash.iter(), |((_val, bitmap), h)| {
         let bucket_id = (*h & buckets_mask) as usize;
         dst[bucket_id][offsets[bucket_id]] = *bitmap;
         offsets[bucket_id] += 1;
@@ -126,6 +127,7 @@ fn copy_to_buckets_binary_bitmap_part<T: 'static + Copy + Send + Sync>(
     });
     Ok(items_written)
 }
+
 ///Operations which all columns must implement
 pub trait ColumnInternalOp {
     fn len(&self, inp: &ColumnWrapper) -> Result<usize, ErrorDesc>;
@@ -320,7 +322,7 @@ macro_rules! sized_types_impl {
                         (*c1_bool, format!("{}", *c1_data))
                     )?;
 
-                    let output=output_col.get_inner().0.downcast_owned::<String>()?;
+                    let output=output_col.get_inner().0.to_vec::<String>()?;
                     Ok(output)
 
                 }
@@ -389,7 +391,7 @@ macro_rules! sized_types_impl {
                            }
                        )?;
                     }
-                    let output=output_col.get_inner().0.downcast_owned::<u64>()?;
+                    let output=output_col.get_inner().0.to_vec::<u64>()?;
                     let _output: Vec<u64>=std::mem::replace(dst, output);
 
                     Ok(())
@@ -582,7 +584,7 @@ macro_rules! binary_types_impl {
                         (*c1_bool, AsBytes::from_bytes(c1_data))
                     )?;
 
-                    let output=output_col.get_inner().0.downcast_owned::<String>()?;
+                    let output=output_col.get_inner().0.to_vec::<String>()?;
                     Ok(output)
 
                 }
@@ -643,7 +645,7 @@ macro_rules! binary_types_impl {
                            }
                        )?;
                     }
-                    let output=output_col.get_inner().0.downcast_owned::<u64>()?;
+                    let output=output_col.get_inner().0.to_vec::<u64>()?;
                     let _output: Vec<u64>=std::mem::replace(dst, output);
 
                     Ok(())
@@ -685,14 +687,15 @@ macro_rules! binary_types_impl {
 
                         src_columns.iter().zip(src_indexes.iter()).zip(hash.iter()).for_each(|((src, src_index), hash)|{
 
-                            let src=src[col_id].bitmap().downcast_ref().unwrap();
+                            let src=&src[col_id];
                             let src_index=match index_id {
                                 Some(i) => &src_index[**i],
                                 None => &index_empty,
                             };
-                            items_written+=copy_to_buckets_part(hash, buckets_mask, src, src_index, &mut offsets_tmp, &mut dst_bitmap).unwrap();
+                            copy_to_buckets_bitmap_binary_part::<T>(hash, buckets_mask, src, src_index, &mut offsets_tmp, &mut dst_bitmap).unwrap();
                         });
                     }
+
 
                     Ok(items_written)
                 }

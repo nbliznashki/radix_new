@@ -1,6 +1,8 @@
 use std::marker::PhantomData;
 
-use radix_column::{ColumnData, ColumnDataF, ColumnDataIndex, ColumnWrapper};
+use radix_column::{
+    ColumnData, ColumnDataF, ColumnDataFMut, ColumnDataIndex, ColumnDataIndexRef, ColumnWrapper,
+};
 
 ////////////////////////////////////
 ////                            ////
@@ -122,6 +124,7 @@ impl<'a, T> IUCBinaryBitmapIndex<'a, T> {
     }
 }
 
+///////////////////////////////////////
 pub enum UpdateBinaryColumn<'a, T> {
     BitmapIndex(IUCBinaryBitmapIndex<'a, T>),
     BitmapNoIndex(IUCBinaryBitmapNoIndex<'a, T>),
@@ -144,39 +147,57 @@ impl<'a, 'b, T: 'static + Send + Sync>
         ),
     ) -> Self {
         let (data, start_pos, len, offset) = data.downcast_binary_mut::<T>().unwrap();
-        match (bitmap.is_some(), index.is_some()) {
-            (true, true) => Self::BitmapIndex(IUCBinaryBitmapIndex {
-                data,
-                start_pos,
-                len,
-                offset: *offset,
-                bitmap: bitmap.downcast_mut().unwrap(),
-                index: index.as_ref().unwrap(),
-                _phantom: PhantomData::<T>,
-            }),
-            (true, false) => Self::BitmapNoIndex(IUCBinaryBitmapNoIndex {
-                data,
-                start_pos,
-                len,
-                offset: *offset,
-                bitmap: bitmap.downcast_mut().unwrap(),
-                _phantom: PhantomData::<T>,
-            }),
-            (false, true) => Self::NoBitmapIndex(IUCBinaryNoBitmapIndex {
-                data,
-                start_pos,
-                len,
-                offset: *offset,
-                index: index.as_ref().unwrap(),
-                _phantom: PhantomData::<T>,
-            }),
-            (false, false) => Self::NoBitmapNoIndex(IUCBinaryNoBitmapNoIndex {
-                data,
-                start_pos,
-                len,
-                offset: *offset,
-                _phantom: PhantomData::<T>,
-            }),
+        let bitmap = bitmap.to_mut();
+        let index = index.to_ref();
+        let offset = *offset;
+
+        match (bitmap, index) {
+            (ColumnDataFMut::Some(bitmap), ColumnDataIndexRef::Some(index)) => {
+                Self::BitmapIndex(IUCBinaryBitmapIndex {
+                    data,
+                    start_pos,
+                    len,
+                    offset,
+                    bitmap,
+                    index,
+                    _phantom: PhantomData::<T>,
+                })
+            }
+            (ColumnDataFMut::Some(_bitmap), ColumnDataIndexRef::SomeOption(_index)) => {
+                panic!("Update column indexed by Option<usize> is not supported")
+            }
+            (ColumnDataFMut::Some(bitmap), ColumnDataIndexRef::None) => {
+                Self::BitmapNoIndex(IUCBinaryBitmapNoIndex {
+                    data,
+                    start_pos,
+                    len,
+                    offset,
+                    bitmap,
+                    _phantom: PhantomData::<T>,
+                })
+            }
+            (ColumnDataFMut::None, ColumnDataIndexRef::Some(index)) => {
+                Self::NoBitmapIndex(IUCBinaryNoBitmapIndex {
+                    data,
+                    start_pos,
+                    len,
+                    offset,
+                    index,
+                    _phantom: PhantomData::<T>,
+                })
+            }
+            (ColumnDataFMut::None, ColumnDataIndexRef::SomeOption(_index)) => {
+                panic!("Update column indexed by Option<usize> is not supported")
+            }
+            (ColumnDataFMut::None, ColumnDataIndexRef::None) => {
+                Self::NoBitmapNoIndex(IUCBinaryNoBitmapNoIndex {
+                    data,
+                    start_pos,
+                    len,
+                    offset,
+                    _phantom: PhantomData::<T>,
+                })
+            }
         }
     }
 }

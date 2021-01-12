@@ -99,6 +99,64 @@ where
     Ok(output_vec)
 }
 
+pub fn filter_owned<T>(index: &mut Vec<T>, keep: &[bool], bitmap: &ColumnDataFRef<bool>) {
+    assert_eq!(index.len(), keep.len());
+    let mut del = 0;
+    match bitmap {
+        ColumnDataFRef::Some(bitmap) => {
+            keep.iter()
+                .zip(*bitmap)
+                .enumerate()
+                .for_each(|(i, (b, bitmap))| {
+                    let b = *b && *bitmap;
+                    let i_new = i - (b as usize) * del;
+                    del += !b as usize;
+                    index.swap(i_new, i);
+                });
+        }
+        ColumnDataFRef::None => {
+            keep.iter().enumerate().for_each(|(i, b)| {
+                let i_new = i - (*b as usize) * del;
+                del += !b as usize;
+                index.swap(i_new, i);
+            });
+        }
+    }
+    index.truncate(index.len() - del);
+}
+
+pub fn filter_ref<T: Copy>(
+    index: &[T],
+    keep: &[bool],
+    bitmap: &ColumnDataFRef<bool>,
+    size_hint: usize,
+) -> Vec<T> {
+    assert_eq!(index.len(), keep.len());
+    let mut index_new: Vec<T> = Vec::with_capacity(size_hint);
+    match bitmap {
+        ColumnDataFRef::Some(bitmap) => {
+            index_new.extend(
+                index
+                    .iter()
+                    .zip(keep.iter())
+                    .zip(*bitmap)
+                    .filter(|((_, b), bitmap)| **b && **bitmap)
+                    .map(|((i, _), _)| *i),
+            );
+        }
+        ColumnDataFRef::None => {
+            index_new.extend(
+                index
+                    .iter()
+                    .zip(keep.iter())
+                    .filter(|(_, b)| **b)
+                    .map(|(i, _)| *i),
+            );
+        }
+    }
+    index_new
+}
+
 pub(crate) fn filter(
     index: &mut ColumnDataIndex,
     keep: &[bool],
@@ -106,63 +164,32 @@ pub(crate) fn filter(
     size_hint: &Option<usize>,
 ) -> Result<usize, ErrorDesc> {
     let size_hint = size_hint.unwrap_or(keep.len() / 2);
+    let bitmap = bitmap.to_ref();
 
     match index {
-        ColumnDataIndex::Owned(ind) => {
-            assert_eq!(ind.len(), keep.len());
-            let mut del = 0;
-            if bitmap.is_some() {
-                keep.iter()
-                    .zip(bitmap.downcast_ref()?.iter())
-                    .enumerate()
-                    .for_each(|(i, (b, bitmap))| {
-                        let b = *b && *bitmap;
-                        let i_new = i - (b as usize) * del;
-                        del += !b as usize;
-                        ind.swap(i_new, i);
-                    });
-            } else {
-                keep.iter().enumerate().for_each(|(i, b)| {
-                    let i_new = i - (*b as usize) * del;
-                    del += !b as usize;
-                    ind.swap(i_new, i);
-                });
-            }
-            ind.truncate(ind.len() - del);
-        }
+        ColumnDataIndex::Owned(ind) => filter_owned(ind, keep, &bitmap),
         ColumnDataIndex::Slice(ind) => {
-            assert_eq!(ind.len(), keep.len());
-            let mut index_new: Vec<usize> = Vec::with_capacity(size_hint);
-            if bitmap.is_some() {
-                index_new.extend(
-                    ind.iter()
-                        .zip(keep.iter())
-                        .zip(bitmap.downcast_ref().unwrap())
-                        .filter(|((_, b), bitmap)| **b && **bitmap)
-                        .map(|((i, _), _)| *i),
-                );
-            } else {
-                index_new.extend(
-                    ind.iter()
-                        .zip(keep.iter())
-                        .filter(|(_, b)| **b)
-                        .map(|(i, _)| *i),
-                );
-            }
-            *index = ColumnDataIndex::new(index_new);
+            *index = ColumnDataIndex::Owned(filter_ref(ind, keep, &bitmap, size_hint))
+        }
+        ColumnDataIndex::OwnedOption(ind) => filter_owned(ind, keep, &bitmap),
+        ColumnDataIndex::SliceOption(ind) => {
+            *index = ColumnDataIndex::OwnedOption(filter_ref(ind, keep, &bitmap, size_hint))
         }
         ColumnDataIndex::None => {
             let mut index_new = Vec::<usize>::with_capacity(size_hint);
-            if bitmap.is_some() {
-                index_new.extend(
-                    keep.iter()
-                        .zip(bitmap.downcast_ref()?.iter())
-                        .enumerate()
-                        .filter(|(_, (b, bitmap))| **b && **bitmap)
-                        .map(|(i, _)| i),
-                );
-            } else {
-                index_new.extend(keep.iter().enumerate().filter(|(_, b)| **b).map(|(i, _)| i));
+            match bitmap {
+                ColumnDataFRef::Some(bitmap) => {
+                    index_new.extend(
+                        keep.iter()
+                            .zip(bitmap)
+                            .enumerate()
+                            .filter(|(_, (b, bitmap))| **b && **bitmap)
+                            .map(|(i, _)| i),
+                    );
+                }
+                ColumnDataFRef::None => {
+                    index_new.extend(keep.iter().enumerate().filter(|(_, b)| **b).map(|(i, _)| i));
+                }
             }
             *index = ColumnDataIndex::new(index_new);
         }
