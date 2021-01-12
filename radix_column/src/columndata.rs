@@ -501,6 +501,18 @@ impl<'a, T> ColumnDataF<'a, T> {
         }
     }
 
+    pub fn clone<'b>(&'b self) -> Self
+    where
+        T: Clone,
+    {
+        match self {
+            ColumnDataF::Owned(s) => ColumnDataF::Owned(s.clone()),
+            ColumnDataF::SliceMut(s) => ColumnDataF::Owned(s.to_vec()),
+            ColumnDataF::Slice(s) => ColumnDataF::Owned(s.to_vec()),
+            ColumnDataF::None => ColumnDataF::None,
+        }
+    }
+
     pub fn downcast_mut<'b>(&'b mut self) -> Result<&'b mut [T], ErrorDesc> {
         match self {
             ColumnDataF::Owned(v) => Ok(v.as_mut_slice()),

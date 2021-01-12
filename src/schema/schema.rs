@@ -39,10 +39,10 @@
 /// 18) Return Table T3=((P_T1_CUS_NO, P_T1_J),(P_T1_CUS_ID,P_T2_J ))
 use std::collections::HashMap;
 
-use crate::table::Table;
+use crate::table::PartitionedTable;
 
 #[derive(Debug)]
 pub struct Schema<'a> {
-    tables: Vec<Table<'a>>,
+    tables: Vec<PartitionedTable<'a>>,
     names: HashMap<String, usize>,
 }

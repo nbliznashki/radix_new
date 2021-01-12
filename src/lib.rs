@@ -7,8 +7,8 @@ pub use table::*;
 mod tests {
 
     use crate::{
-        filter, tabletotable::TableToTableMap, ExpressionInput, PartitionedIndex, Table,
-        TableExpression,
+        filter, tabletotable::TableToTableMap, ExpressionInput, PartitionedIndex, PartitionedTable,
+        Table, TableExpression,
     };
     use radix_column::*;
     use radix_operations::*;
@@ -111,7 +111,7 @@ mod tests {
         ];
         let dict = Dictionary::new();
 
-        let mut t: Table = Table::new(vec![2, 2, 1]);
+        let mut t: PartitionedTable = PartitionedTable::new(vec![2, 2, 1]);
         t.push(&dict, &names).unwrap();
         let p_column = t.get_part_col(&0).unwrap();
 
@@ -128,7 +128,7 @@ mod tests {
         ];
         let dict = Dictionary::new();
 
-        let mut t: Table = Table::new(vec![2, 2, 1]);
+        let mut t: PartitionedTable = PartitionedTable::new(vec![2, 2, 1]);
         t.push(&dict, &names).unwrap();
         let p_column = t.get_part_col(&0).unwrap();
 
@@ -143,7 +143,7 @@ mod tests {
         let names: Vec<u32> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         let dict = Dictionary::new();
 
-        let mut t: Table = Table::new(vec![2, 2, 2, 2, 1]);
+        let mut t: PartitionedTable = PartitionedTable::new(vec![2, 2, 2, 2, 1]);
         t.push(&dict, &names).unwrap();
         let p_column = t.get_part_col(&0).unwrap();
 
@@ -159,7 +159,7 @@ mod tests {
         let bitmap: Vec<bool> = vec![true, false, true, true, true, true, true, true, true];
         let dict = Dictionary::new();
 
-        let mut t: Table = Table::new(vec![2, 2, 2, 2, 1]);
+        let mut t: PartitionedTable = PartitionedTable::new(vec![2, 2, 2, 2, 1]);
         t.push_with_bitmap(&dict, &names, &bitmap).unwrap();
         let p_column = t.get_part_col(&0).unwrap();
 
@@ -175,7 +175,7 @@ mod tests {
     fn columns_addassign() {
         let dict = Dictionary::new();
 
-        let mut t: Table = Table::new(vec![2, 2, 2, 2, 1]);
+        let mut t: PartitionedTable = PartitionedTable::new(vec![2, 2, 2, 2, 1]);
 
         let c1_names: Vec<u32> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         let c1_bitmap: Vec<bool> = vec![true, false, true, true, true, true, true, true, true];
@@ -216,7 +216,7 @@ mod tests {
     fn columns_eq_copy() {
         let dict = Dictionary::new();
 
-        let mut t: Table = Table::new(vec![2, 2, 2, 2, 1]);
+        let mut t: PartitionedTable = PartitionedTable::new(vec![2, 2, 2, 2, 1]);
 
         let mut c1_names: Vec<bool> = vec![
             false, false, false, false, false, false, false, false, false,
@@ -264,7 +264,7 @@ mod tests {
         .unwrap();*/
         let dict = Dictionary::new();
 
-        let mut t: Table = Table::new(vec![2, 2, 2, 2, 1]);
+        let mut t: PartitionedTable = PartitionedTable::new(vec![2, 2, 2, 2, 1]);
 
         let mut c1_names: Vec<bool> = vec![
             false, false, false, false, false, false, false, false, false,
@@ -367,7 +367,7 @@ mod tests {
         .unwrap();*/
         let dict = Dictionary::new();
 
-        let mut t: Table = Table::new(vec![2, 2, 2, 2, 1]);
+        let mut t: PartitionedTable = PartitionedTable::new(vec![2, 2, 2, 2, 1]);
 
         let c2_names: Vec<String> = vec![
             "1A".to_string(),
@@ -420,7 +420,7 @@ mod tests {
     fn test_expression() {
         let dict = Dictionary::new();
 
-        let mut t: Table = Table::new(vec![2, 2, 2, 2, 1]);
+        let mut t: PartitionedTable = PartitionedTable::new(vec![2, 2, 2, 2, 1]);
 
         let mut c1_names: Vec<u32> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         let mut c1_bitmap: Vec<bool> = vec![true, true, true, true, false, true, true, true, true];
@@ -466,6 +466,50 @@ mod tests {
     }
 
     #[test]
+    fn test_expression_table() {
+        let dict = Dictionary::new();
+
+        let mut t: Table = Table::new();
+
+        let mut c1_names: Vec<u32> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let mut c1_bitmap: Vec<bool> = vec![true, true, true, true, false, true, true, true, true];
+
+        let c2_names: Vec<u32> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let c2_bitmap: Vec<bool> = vec![true, false, true, true, true, true, true, true, true];
+        let c3_names: Vec<u32> = vec![1, 2, 3, 4, 5, 7, 7, 8, 9];
+        let c3_bitmap: Vec<bool> = vec![true, true, true, true, true, true, true, true, false];
+
+        t.push_with_bitmap(&dict, &c3_names, &c3_bitmap).unwrap();
+
+        t.push_with_bitmap(&dict, &c2_names, &c2_bitmap).unwrap();
+
+        t.push_mut_with_bitmap(&mut c1_names, &mut c1_bitmap)
+            .unwrap();
+
+        let c3_index = ColumnDataIndex::new(vec![0, 0, 2, 2, 4, 4, 6, 6, 8]);
+
+        t.push_index(c3_index, &[0]).unwrap();
+
+        let mut e = TableExpression::new("<", &[500, 1000]);
+        e.expand_node(500, "+", &[0, 500]).unwrap();
+        e.expand_node(500, "+", &[1, 2]).unwrap();
+
+        //(col_0+(col_1+col_2))<16
+
+        let const_val = &ColumnWrapper::new_const(&dict, 16u32);
+        e.expand_node_as_const(1000, &mut Some(const_val)).unwrap();
+
+        t.add_expression_as_new_column(&dict, &e);
+
+        let expected_result = vec![
+            "true", "(null)", "true", "true", "(null)", "false", "false", "false", "(null)",
+        ];
+        let result = t.materialize_as_string(&dict, &3).unwrap();
+        assert_eq!(result, expected_result);
+        //t.print(&dict).unwrap();
+    }
+
+    #[test]
     fn columns_hash() {
         /*
         rayon::ThreadPoolBuilder::new()
@@ -474,7 +518,7 @@ mod tests {
             .unwrap();*/
         let dict = Dictionary::new();
 
-        let mut t: Table = Table::new(vec![2, 2, 2, 2, 1]);
+        let mut t: PartitionedTable = PartitionedTable::new(vec![2, 2, 2, 2, 1]);
 
         let c2_names: Vec<String> = vec![
             "1A".to_string(),
@@ -541,7 +585,7 @@ mod tests {
         .unwrap();*/
         let dict = Dictionary::new();
 
-        let mut t: Table = Table::new(vec![2, 2, 2, 2, 1]);
+        let mut t: PartitionedTable = PartitionedTable::new(vec![2, 2, 2, 2, 1]);
 
         let c1_names: Vec<u64> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         let c1_bitmap: Vec<bool> = vec![true, false, true, true, true, true, true, true, true];
@@ -651,7 +695,7 @@ mod tests {
         .unwrap();*/
         let dict = Dictionary::new();
 
-        let mut t: Table = Table::new(vec![4, 5]);
+        let mut t: PartitionedTable = PartitionedTable::new(vec![4, 5]);
 
         let c1_names: Vec<String> = vec![
             "1A".to_string(),
@@ -708,7 +752,7 @@ mod tests {
         .unwrap();*/
         let dict = Dictionary::new();
 
-        let mut t: Table = Table::new(vec![4, 5]);
+        let mut t: PartitionedTable = PartitionedTable::new(vec![4, 5]);
 
         let c1_names: Vec<String> = vec![
             "1A".to_string(),

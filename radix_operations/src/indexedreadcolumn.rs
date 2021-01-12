@@ -311,6 +311,29 @@ impl<'a, T: Send + Sync + 'static> From<(&'a [T], &'a ColumnDataIndex<'a>)> for 
         }
     }
 }
+
+impl<'a, T: Send + Sync + 'static> From<(&'a [T], &'a [bool], &'a ColumnDataIndex<'a>)>
+    for ReadColumn<'a, T>
+{
+    fn from((data, bitmap, index): (&'a [T], &'a [bool], &'a ColumnDataIndex<'a>)) -> Self {
+        let index = index.to_ref();
+        match index {
+            ColumnDataIndexRef::None => Self::BitmapNoIndex(IRCBitmapNoIndex { data, bitmap }),
+            ColumnDataIndexRef::Some(index) => Self::BitmapIndex(IRCBitmapIndex {
+                data,
+                bitmap,
+                index,
+            }),
+            ColumnDataIndexRef::SomeOption(index) => {
+                Self::BitmapIndexOption(IRCBitmapIndexOption {
+                    data,
+                    bitmap,
+                    index,
+                })
+            }
+        }
+    }
+}
 impl<'a, T> ReadColumn<'a, T> {
     pub fn len(&self) -> usize {
         match self {
